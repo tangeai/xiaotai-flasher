@@ -4,12 +4,15 @@ import { mkdir, mkdtemp, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { setTimeout as wait } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 
 const apiRoot = 'https://api.github.com/repos/';
 const espRepo = 'tangeai/xiaotai-esp32';
 const archiveRepo = 'tangeai/xiaotai';
 const maxImageSize = 128 * 1024 * 1024;
+const downloadIdleMs = 180000;
+const requestAttempts = 3;
 const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const digestPattern = /^[0-9a-f]{64}$/i;
 
@@ -24,29 +27,67 @@ const legacySlugs = {
   'mz28-ai': 'mz28-ai-ppd-v12',
 };
 
-async function request(url, { api = false, timeout = 30000 } = {}) {
+async function request(
+  url,
+  { api = false, signal = AbortSignal.timeout(30000) } = {},
+) {
   const headers = api ? { Accept: 'application/vnd.github+json' } : {};
   if (api && process.env.GITHUB_TOKEN)
     headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-  const response = await fetch(url, {
-    headers,
-    signal: AbortSignal.timeout(timeout),
-  });
-  if (!response.ok)
-    throw new Error(`GitHub 返回 HTTP ${response.status} (${url})`);
+  const response = await fetch(url, { headers, signal });
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {});
+    const error = new Error(`GitHub 返回 HTTP ${response.status} (${url})`);
+    error.status = response.status;
+    throw error;
+  }
   return response;
 }
 
-const api = (path) => request(apiRoot + path, { api: true });
+function retryable(error) {
+  return (
+    error instanceof TypeError ||
+    error.name === 'TimeoutError' ||
+    error.name === 'AbortError' ||
+    error.code === 'ERR_STREAM_PREMATURE_CLOSE' ||
+    error.status === 429 ||
+    error.status >= 500
+  );
+}
+
+function errorDetail(error) {
+  const cause = error.cause?.code || error.cause?.message;
+  return cause ? `${error.message} (${cause})` : error.message;
+}
+
+async function readMetadata(url, format, api = false) {
+  for (let attempt = 1; attempt <= requestAttempts; attempt += 1) {
+    try {
+      const response = await request(url, { api });
+      return { data: await response[format](), headers: response.headers };
+    } catch (error) {
+      const message = `${url}：${errorDetail(error)}`;
+      if (!retryable(error) || attempt === requestAttempts) {
+        throw new Error(`读取 GitHub 发布信息失败：${message}`, {
+          cause: error,
+        });
+      }
+      console.warn(`读取 GitHub 发布信息中断，将重试：${message}`);
+      await wait(1000 * attempt);
+    }
+  }
+}
+
+const api = (path) => readMetadata(apiRoot + path, 'json', true);
 
 async function listReleases(repository, includePrerelease) {
   const releases = [];
   for (let page = 1; ; page += 1) {
-    const response = await api(
+    const { data, headers } = await api(
       `${repository}/releases?per_page=100&page=${page}`,
     );
-    releases.push(...(await response.json()));
-    if (!response.headers.get('link')?.includes('rel="next"')) break;
+    releases.push(...data);
+    if (!headers.get('link')?.includes('rel="next"')) break;
   }
   return releases
     .filter(
@@ -94,7 +135,7 @@ function assetDetails(release, filename, expected = {}) {
   ) {
     throw new Error(`Release 附件链接不符合预期：${filename}`);
   }
-  return { url: url.href, sha256: checksum, bytes: asset.size };
+  return { filename, url: url.href, sha256: checksum, bytes: asset.size };
 }
 
 function releaseEntry(repository, release, board, image) {
@@ -132,8 +173,8 @@ function atZero(offset) {
 
 async function espEntries(release) {
   const manifestAsset = assetDetails(release, 'release-manifest.json');
-  const response = await request(manifestAsset.url);
-  const bytes = Buffer.from(await response.arrayBuffer());
+  const { data } = await readMetadata(manifestAsset.url, 'arrayBuffer');
+  const bytes = Buffer.from(data);
   if (
     bytes.length !== manifestAsset.bytes ||
     createHash('sha256').update(bytes).digest('hex') !== manifestAsset.sha256
@@ -201,17 +242,18 @@ async function espEntries(release) {
 
 async function archiveEntries(release) {
   const tag = encodeURIComponent(release.tag_name);
-  const tree = await (
-    await api(`${archiveRepo}/git/trees/${tag}?recursive=1`)
-  ).json();
+  const { data: tree } = await api(
+    `${archiveRepo}/git/trees/${tag}?recursive=1`,
+  );
   if (tree.truncated)
     throw new Error(`${release.tag_name} 的仓库目录列表不完整`);
-  const paths = tree.tree.filter(({ type, path }) =>
-    type === 'blob' && /^boards\/[^/]+\/[^/]+\/board\.json$/.test(path),
+  const paths = tree.tree.filter(
+    ({ type, path }) =>
+      type === 'blob' && /^boards\/[^/]+\/[^/]+\/board\.json$/.test(path),
   );
   const boards = await Promise.all(
     paths.map(async ({ path, sha }) => {
-      const blob = await (await api(`${archiveRepo}/git/blobs/${sha}`)).json();
+      const { data: blob } = await api(`${archiveRepo}/git/blobs/${sha}`);
       if (blob.encoding !== 'base64' || typeof blob.content !== 'string') {
         throw new Error(`${release.tag_name} 的板卡定义无法读取：${path}`);
       }
@@ -301,30 +343,75 @@ async function validCachedImage(path, image) {
   return hash.digest('hex') === image.sha256;
 }
 
-async function mirrorImage(image, destination, temporary) {
-  if (await validCachedImage(destination, image)) return;
-  const response = await request(image.url, { timeout: 180000 });
-  if (!response.body) throw new Error('固件下载没有响应内容：' + image.url);
+async function downloadImage(image, temporary) {
+  const controller = new AbortController();
+  const idle = setTimeout(() => {
+    const error = new Error(`连续 ${downloadIdleMs / 1000} 秒未收到固件数据`);
+    error.name = 'TimeoutError';
+    controller.abort(error);
+  }, downloadIdleMs);
   let bytes = 0;
   const hash = createHash('sha256');
   const verify = new Transform({
     transform(chunk, _encoding, done) {
+      idle.refresh();
       bytes += chunk.length;
       if (bytes > image.bytes)
-        return done(new Error('下载固件超出 Release 中的大小：' + image.url));
+        return done(new Error('下载固件超出 Release 中的大小'));
       hash.update(chunk);
       done(null, chunk);
     },
   });
-  await pipeline(
-    Readable.fromWeb(response.body),
-    verify,
-    createWriteStream(temporary, { flags: 'wx' }),
-  );
-  if (bytes !== image.bytes || hash.digest('hex') !== image.sha256) {
-    throw new Error('下载固件 SHA‑256 或大小校验失败：' + image.url);
+  try {
+    const response = await request(image.url, { signal: controller.signal });
+    if (!response.body) throw new Error('固件下载没有响应内容');
+    idle.refresh();
+    await pipeline(
+      Readable.fromWeb(response.body),
+      verify,
+      createWriteStream(temporary, { flags: 'wx' }),
+      { signal: controller.signal },
+    );
+  } catch (error) {
+    if (controller.signal.aborted) throw controller.signal.reason;
+    throw error;
+  } finally {
+    clearTimeout(idle);
   }
-  await rename(temporary, destination);
+  if (bytes !== image.bytes) {
+    const error = new Error(
+      `固件下载不完整，只收到 ${bytes}/${image.bytes} 字节`,
+    );
+    error.code = 'ERR_STREAM_PREMATURE_CLOSE';
+    throw error;
+  }
+  if (hash.digest('hex') !== image.sha256) {
+    throw new Error('下载固件 SHA‑256 校验失败');
+  }
+}
+
+async function mirrorImage(image, destination, temporary) {
+  if (await validCachedImage(destination, image)) return;
+  for (let attempt = 1; attempt <= requestAttempts; attempt += 1) {
+    console.log(`下载 ${image.filename}（${attempt}/${requestAttempts}）`);
+    try {
+      await downloadImage(image, temporary);
+    } catch (error) {
+      const detail = errorDetail(error);
+      if (!retryable(error) || attempt === requestAttempts) {
+        throw new Error(
+          `${image.filename} 下载失败：${detail}（${image.url}）`,
+          { cause: error },
+        );
+      }
+      console.warn(`${image.filename} 下载中断，将重试：${detail}`);
+      await rm(temporary, { force: true });
+      await wait(1000 * attempt);
+      continue;
+    }
+    await rename(temporary, destination);
+    return;
+  }
 }
 
 async function generate(output, includePrerelease) {
