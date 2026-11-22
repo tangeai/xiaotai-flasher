@@ -11,6 +11,26 @@
 
 官网可将 `dist/` 挂载到 `/web-flasher/`，并将 `/web-flasher` 跳转到带尾部斜杠的路径，保留查询参数。发布使用 HTTPS。
 
+### 发布脚本
+
+在装有 Bash、Node.js、npm 和 tar 的机器上，执行以下命令生成静态发布包：
+
+```bash
+./scripts/release.sh --boards-url https://firmware.example.com/xiaotai/boards.json
+```
+
+脚本默认安装锁定的依赖并构建，将 `.tar.gz` 写入 `releases/`。可用 `--output-dir` 指定输出目录。省略 `--boards-url` 时，使用仓库里的 `public/boards-source.json`。命令行指定的链接只写入发布包。已安装依赖时可传 `--skip-install`。
+
+在静态站点所在机器上，可以生成发布包并切换部署目录：
+
+```bash
+./scripts/release.sh \
+  --boards-url https://firmware.example.com/xiaotai/boards.json \
+  --deploy-dir /var/www/xiaotai/web-flasher
+```
+
+将网站的 `/web-flasher/` 指向该部署路径。首次发布时使用尚未占用的路径，脚本会建立指向版本目录的符号链接，后续发布原子切换该链接。已有独立静态发布流程的站点，可把压缩包解压到该流程使用的目录。
+
 ## 配置板卡目录链接
 
 在 [`public/boards-source.json`](public/boards-source.json) 填写板卡 JSON 的直链。Vite 会原样复制到 `dist/boards-source.json`。已发布的静态站点可替换这个配置文件来切换链接，无需重新构建 JavaScript。
