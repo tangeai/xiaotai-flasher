@@ -50,6 +50,7 @@ function copyCurrentAssets(site, candidate) {
 
 function publish(site, releaseName, source) {
   if (!releaseNamePattern.test(releaseName)) throw new Error('无效的发布版本目录名。');
+  if (!completeRelease(source)) throw new Error('静态产物不完整。');
   mkdirSync(site.versions, { recursive: true });
   const candidate = join(site.versions, releaseName);
   mkdirSync(candidate);
@@ -77,9 +78,24 @@ function readReleaseInfo(current) {
 }
 
 function completeRelease(path) {
-  return existsSync(join(path, 'index.html')) &&
-    existsSync(join(path, 'boards-source.json')) &&
-    lstatSync(join(path, 'assets'), { throwIfNoEntry: false })?.isDirectory();
+  const index = join(path, 'index.html');
+  const options = { throwIfNoEntry: false };
+  if (
+    !lstatSync(join(path, 'boards-source.json'), options)?.isFile() ||
+    !lstatSync(join(path, 'assets'), options)?.isDirectory() ||
+    !lstatSync(index, options)?.isFile()
+  ) {
+    return false;
+  }
+
+  const assetTags = readFileSync(index, 'utf8').matchAll(
+    /<(?:script|link)\b[^>]*\b(?:src|href)=["']\.\/(assets\/[\w.-]+)["']/g,
+  );
+  const assets = Array.from(assetTags, ([, asset]) => asset);
+  return assets.some((asset) => asset.endsWith('.js')) && assets.every((asset) => {
+    const file = lstatSync(join(path, asset), options);
+    return file?.isFile() && file.size > 0;
+  });
 }
 
 function displayStatus(site) {
@@ -92,7 +108,9 @@ function displayStatus(site) {
   console.log('[INFO] 源码提交 ' + (readReleaseInfo(site.current).commit || '未记录'));
   console.log('[INFO] 板卡目录 ' + readJSON(join(site.current, 'boards-source.json')).boards_url);
   const versions = readdirSync(site.versions, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && releaseNamePattern.test(entry.name))
+    .filter((entry) =>
+      entry.isDirectory() && releaseNamePattern.test(entry.name) &&
+      completeRelease(join(site.versions, entry.name)))
     .map((entry) => entry.name)
     .sort().reverse();
   console.log('[INFO] 可用版本\n' + versions.join('\n'));
@@ -120,6 +138,7 @@ function matches(site, commit, boardsUrl) {
 
 const [command, path, ...args] = process.argv.slice(2);
 try {
+  if (command === 'verify') process.exit(completeRelease(resolve(path)) ? 0 : 1);
   const site = deployment(path, command === 'publish');
   switch (command) {
     case 'publish': publish(site, ...args); break;

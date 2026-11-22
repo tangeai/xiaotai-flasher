@@ -1,6 +1,6 @@
 # 小钛固件烧录与串口日志工作台
 
-用浏览器通过 USB 串口烧录小钛或本地 ESP32、BK7258、EC718PM 固件，并在同一页面查看设备串口日志。前端使用 React + Vite，ESP32 烧录使用乐鑫 `esptool-js`，BK7258 使用 Beken UART 下载协议。工作台按静态站点部署，板卡目录通过独立 JSON 链接维护。
+用浏览器通过 USB 串口烧录小钛或本地 ESP32 和 BK7258 固件，并在同一页面查看设备串口日志。前端使用 React + Vite，ESP32 烧录使用乐鑫 `esptool-js`，BK7258 使用 Beken UART 下载协议。工作台按静态站点部署，板卡目录通过独立 JSON 链接维护。
 
 ## 功能
 
@@ -8,12 +8,11 @@
 | --- | --- |
 | ESP32 在线烧录 | 适用 ESP32、ESP32-S2、ESP32-S3、ESP32-C2、ESP32-C3、ESP32-C5、ESP32-C6、ESP32-H2、ESP32-P4 |
 | BK7258 在线烧录 | 支持原始 `all-app.bin` 从 `0x0` 写入，烧录后读取 Flash CRC 校验 |
-| EC718 在线烧录 | 支持 Air780EPM 的 `.binpkg`，通过原生 USB BOOT 写入 BL、AP、CP 分区，并读取运行模式下的 SOC 串口日志 |
 | 固件选择 | 已配置目录时默认显示小钛固件。也可导入本地完整 `.bin`。ESP32 和 BK7258 的完整 BIN 从 `0x0` 写入 |
 | 写入校验 | 校验在线 BIN 的 SHA‑256。ESP32 写入后对比 Flash 的 MD5，BK7258 写入后对比 Flash 的 CRC |
 | 串口日志 | 独立连接运行中的设备，或在烧录结束后自动打开。可选波特率、暂停滚动、清空、复制和下载 |
 | 高级设置 | 支持多 BIN 分段地址、烧录波特率、Flash 模式、频率、容量及复位方式。全片擦除默认关闭 |
-| 工作台布局 | 固件和进度与日志并排显示，支持全屏，右上角可打开连接与排查 |
+| 工作台布局 | 固件和进度与日志并排显示，支持全屏，右上角可打开 FAQ |
 
 ## 使用工作台
 
@@ -24,26 +23,28 @@
 3. 点击「开始烧录」并确认固件。等进度显示「烧录完成，校验通过」。完整镜像烧录后请重新配网和绑定设备。
 4. 在右侧「串口日志」查看设备运行输出。也可直接点「连接日志串口」，默认波特率为 `115200`，UART 速率需与固件设置一致。设备重启后串口变化时，重新选择日志串口。需要看最早的启动日志时，先连接日志串口，再手动复位设备。
 
-连接失败时，打开右上角「连接与排查」，按板卡说明进入下载模式。写入不稳定时，可在高级设置中降低烧录波特率。
+连接失败时，打开右上角「FAQ」，按板卡说明进入下载模式。写入不稳定时，可在高级设置中降低烧录波特率。
 
-ESP32 完整 BIN 会覆盖镜像写入范围内的扇区。需要清掉全片旧数据时，在高级设置勾选「全片擦除」。模式、时钟和容量默认沿用原镜像头。手动修改需提供对应芯片的启动镜像，工作台会重新计算其 SHA‑256。应使用板卡固件说明指定的参数。 [乐鑫 Flash 参数说明](https://docs.espressif.com/projects/esptool/en/latest/esp32s3/esptool/flash-modes.html)
+ESP32 完整 BIN 写入前会检查启动镜像、分区表及对应芯片的应用镜像，再校验写入结果。完整 BIN 会覆盖镜像写入范围内的扇区。需要清掉全片旧数据时，在高级设置勾选「全片擦除」。模式、时钟和容量默认沿用原镜像头。手动修改需提供对应芯片的启动镜像，工作台会重新计算其 SHA‑256。应使用板卡固件说明指定的参数。 [乐鑫 Flash 参数说明](https://docs.espressif.com/projects/esptool/en/latest/esp32s3/esptool/flash-modes.html)
 
 ### BK7258 烧录和看日志
 
-1. 将开发板的下载串口 `DL_UART0` 接到电脑，在工作台选择 **BK7258**。选择对应板型的在线版本，或导入板卡原始 `all-app.bin`。
-2. 点「连接设备」并选择 UART0。页面显示等待连接后，按复位键或保持串口连线并重新给开发板上电。握手成功后点「开始烧录」。
-3. 等待写入和 CRC 校验完成。串口日志沿用同一工作台，UART0 默认 `115200`。要看最早的启动日志，可以先连接日志串口，再手动复位。
+1. 将开发板的下载串口 `DL_UART0` 接到电脑，在工作台选择 **博通集成 Beken（BK7258）**。选择对应板型的在线版本，或导入板卡原始 `all-app.bin`。
+2. 点「连接设备」并选择 UART0。工作台会尝试 RTS 自动复位。如果板卡没有接 RTS，请按芯片复位键或保持串口连线并重新给板供电。握手成功后点「开始烧录」。
+3. 在「高级设置」可选烧录波特率。握手使用 `115200`，开始烧录后确认目标波特率再擦写 Flash。工作台默认保留 `115200`，更高速率取决于串口芯片与驱动支持。烧录失败后可调整波特率，再点「重新连接」复用同一串口。串口日志波特率独立设置，UART0 默认为 `115200`。要看最早的启动日志，可以先连接日志串口，再手动复位。
 
 本分支支持小钛立创和觅感 8 MiB Flash 板型使用的原始镜像布局。OTA 文件、安全下载包、分段地址、整片擦除和其他 BK 芯片暂未开放。Flash 型号无法识别时会停止烧录。 [Beken BK7258 开发指南](https://docs.riselink.ai/arminodoc/bk_avdk_smp/smp_doc/bk7258/en/v3.1.1/get-started/index.html#burn-code) · [小钛板型说明](https://github.com/tangeai/xiaotai#选择开发板和固件)
 
-### EC718PM（Air780EPM）烧录和看日志
+## 板卡和浏览器兼容性记录
 
-1. 确认模组型号为 **Air780EPM**。用可传数据的 USB 线连接模组的原生 USB 口。按住 BOOT 键复位或重新上电，松开后在工作台选择 **EC718PM（Air780EPM）**，点「连接 USB BOOT」。选择新出现的下载口（VID:PID `17D1:0001`）。该 USB 标识也用于其他移芯模组，工作台按所选板型限制固件，板型请以设备丝印为准。
-2. 选择在线版本，或用 7-Zip 打开合宙的 `.soc`，从包中的 `info.json` 查看 `rom.file` 并提取对应的 `.binpkg`。本地烧录同时选择 `ec718m_usb.bin`（50788 字节）。AgentBoot 校验后仅加载到模组 RAM。 [合宙固件版本](https://docs.openluat.com/air780epm/luatos/firmware/780epm_version/) · [AgentBoot 文件](https://media.githubusercontent.com/media/wendal/luatos-cli/62aa4ed4f44f5860137fb90fb3998ce401546d71/refs/origin_tools/ec_download/agentboot/ec718m_usb.bin)
-3. 点「开始烧录」，确认包内的 BL、AP、CP 分区将被覆盖。工作台按包内地址写入并检查各分区烧录状态。当前流程使用 Air780EPM 核心固件包，Lua 脚本和文件系统镜像请使用合宙工具单独管理。
-4. 设备重启后点「连接日志串口」，选择运行模式的 **SOC 日志口**（VID:PID `19D1:0001`、USB 接口 `x.2`、速率 `921600`）。有多个同名端口时，在系统设备管理器中核对接口编号。工作台解码该口的 LuatOS 日志帧，支持暂停滚动、复制和下载。
+| 板卡和接口 | 环境 | 已验证结果 |
+| --- | --- | --- |
+| 立创·实战派 BK7258，CH340K（`1A86:7522`），Flash JEDEC `0x1765C8` | Windows，Chromium 系浏览器，具体版本未记录 | 用户实板确认 `2000000` 烧录和 CRC 校验通过。日志使用 `115200`。打开日志曾使板卡黑屏，打开后释放 RTS/DTR 恢复。 |
+| 立创·实战派 BK7258，CH340K（COM19） | Windows，BKFIL `4.1.7.261014250` | 用户截图显示 `build.101` 镜像在 `2000000` 下已进入 Flash 写入。 |
+| ESP32，常见 USB 转 UART 桥和原生 USB | Chromium 模拟串口 | 已回归日志中的控制线处理。USB 转 UART 板卡的实际复位行为取决于 RTS/DTR 接线，待实板核对。 |
+| macOS 上的 Chrome / Edge | Chromium 源码核对 | 串口驱动和高速波特率设置路径与 Windows 不同。RTS/DTR 和 `2000000` 的结果待实板确认。 |
 
-[合宙 Air780EPM 下载接口说明](https://docs.openluat.com/air780epm/luatos/hardware/download/) · [LuatOS CLI 下载与日志协议](https://github.com/wendal/luatos-cli/blob/main/docs/ec718-flash-protocol.md)
+日志串口打开后，BK7258 和可识别的 ESP32 USB 转 UART 桥先监听 400 ms。有串口数据时保持控制线状态，静默时尝试释放 RTS/DTR 一次。浏览器授权弹窗由系统可见的接口和网页端口过滤条件共同决定。 [Chromium Windows 串口实现](https://github.com/chromium/chromium/blob/main/services/device/serial/serial_io_handler_win.cc#L231) · [Chromium macOS 串口实现](https://github.com/chromium/chromium/blob/main/services/device/serial/serial_io_handler_posix.cc#L148)
 
 ## 配置小钛固件目录
 
@@ -61,23 +62,11 @@ ESP32 完整 BIN 会覆盖镜像写入范围内的扇区。需要清掉全片旧
 
 ### 手动上传新固件
 
+如果旧部署没有固件目录，先运行 `sudo mkdir -p /opt/xiaotai-flasher/board-catalog/firmware`。
+
 1. 用 `sha256sum 新固件.bin` 计算摘要，将适配该板型、从 `0x0` 写入的完整 BIN 以 `<摘要>.bin` 的文件名上传到服务器的 `/opt/xiaotai-flasher/board-catalog/firmware/`。BK7258 需使用原始 `all-app.bin`。
 2. 在仓库根目录的 [`boards.json`](boards.json) 对应板型下添加版本。`bin_url` 填 `./firmware/<摘要>.bin`，`sha256` 填相同摘要。设为推荐版本时，去掉同一板型旧版本的 `recommended: true`。运行 `npm test` 检查格式和下载路径。
 3. BIN 可下载后，将更新后的 `boards.json` 上传到 `/opt/xiaotai-flasher/board-catalog/boards.json`，刷新页面确认新版本。前端无需重新构建。由人工维护目录时，避免运行会重新生成目录的 `catalog` 命令。
-
-EC718PM 版本手动配置。板卡的 `chip` 填 `EC718PM`，可将 `.binpkg` 以 `<摘要>.binpkg` 的文件名上传到同一 `firmware/` 目录，在现有版本结构中填写：
-
-```json
-{
-  "version": "V2029",
-  "bin_url": "./firmware/<固件包的 SHA-256>.binpkg",
-  "sha256": "<固件包的 SHA-256>",
-  "agent_url": "./firmware/0db9e8f3462140c7c368723aa144b976ac033ae45fc6d37db5d959b1c9238019.bin",
-  "status": "published"
-}
-```
-
-`agent_url` 指向已获分发许可的匹配 AgentBoot，省略时工作台提示用户本地选择。已有 Nginx 部署需更新路由片段并重载，才能从 `firmware/` 下载 `.binpkg`。
 
 ### 从 GitHub Releases 生成目录
 
@@ -130,14 +119,22 @@ node scripts/generate-boards.mjs --output-dir ./releases/board-catalog
 
 ### 1. 安装工作台和固件目录
 
-首次安装时，把仓库克隆到部署目录下面。如果之前已经在 `/opt/xiaotai-flasher` 中执行过普通的 `git clone`，跳过这两条命令。
+首次安装时，把包含 ESP32 和 BK7258 支持的分支克隆到部署目录。在此分支合入 `main` 前，部署使用 `feat/bk7258-web-flasher`。
 
 ```bash
 sudo mkdir -p /opt/xiaotai-flasher
-sudo git clone https://github.com/tangeai/xiaotai-flasher.git /opt/xiaotai-flasher/xiaotai-flasher
+sudo git clone --branch feat/bk7258-web-flasher \
+  https://github.com/tangeai/xiaotai-flasher.git /opt/xiaotai-flasher/xiaotai-flasher
 ```
 
-直接运行仓库里的安装脚本。脚本会复用这个检出，构建工作台。
+已有 `main` 部署时，在干净的源码目录执行下列命令切换分支，再运行安装脚本或执行 `deploy-prod.sh update`。若本地已在目标分支，可直接更新。
+
+```bash
+sudo git -C /opt/xiaotai-flasher/xiaotai-flasher fetch origin
+sudo git -C /opt/xiaotai-flasher/xiaotai-flasher switch feat/bk7258-web-flasher
+```
+
+安装脚本复用当前检出，构建工作台并创建 `board-catalog/firmware/`。
 
 ```bash
 sudo env BOARDS_URL=/web-flasher/board-catalog/boards.json \
@@ -199,4 +196,4 @@ npm run dev      # http://localhost:5173/
 ```
 
 执行 `npm run build` 生成 `dist/`，再用 `npm run preview` 检查构建结果。
-执行 `npm test` 可验证固件目录、镜像校验、ESP32 Flash 参数，以及 BK7258、EC718 的模拟串口流程。
+执行 `npm test` 可验证固件目录、镜像校验、ESP32 Flash 参数，以及 BK7258 的模拟串口流程。

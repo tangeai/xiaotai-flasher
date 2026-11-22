@@ -68,6 +68,7 @@ NODE
 else
   log "使用已有板卡目录配置 $config"
 fi
+mkdir -p -- "$root/board-catalog/firmware"
 install -m 0755 -- "$repo/scripts/deploy-prod.sh" "$stage/deploy-prod.sh"
 mv -- "$stage/deploy-prod.sh" "$root/deploy-prod.sh"
 exec 9>&-

@@ -7,6 +7,8 @@ import { pipeline } from 'node:stream/promises';
 import { setTimeout as wait } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 
+import { chips } from '../src/chips.mjs';
+
 const apiRoot = 'https://api.github.com/repos/';
 const espRepo = 'tangeai/xiaotai-esp32';
 const archiveRepo = 'tangeai/xiaotai';
@@ -100,12 +102,8 @@ async function listReleases(repository, includePrerelease) {
 }
 
 function normalizeChip(target) {
-  const match = /^esp32(?:-?([a-z]+[0-9]+))?$/i.exec(target ?? '');
-  return match
-    ? match[1]
-      ? 'ESP32-' + match[1].toUpperCase()
-      : 'ESP32'
-    : null;
+  const chip = String(target ?? '').toUpperCase().replace(/^ESP32-?([A-Z]+[0-9]+)$/, 'ESP32-$1');
+  return chips.includes(chip) ? chip : null;
 }
 
 function assetDetails(release, filename, expected = {}) {
@@ -220,6 +218,8 @@ async function espEntries(release) {
       `${release.tag_name} 的旧版发布清单缺少起始地址为 0x0 的完整 BIN`,
     );
   }
+  const chip = normalizeChip(image?.chip ?? build?.target);
+  if (!chip) return [];
   const prefix = release.tag_name.split('-app-v')[0];
   const slug = legacySlugs[prefix] ?? project?.replace(/-xiaotai$/, '');
   return [
@@ -229,14 +229,14 @@ async function espEntries(release) {
       {
         slug,
         model: board,
-        chip: normalizeChip(image?.chip ?? build?.target),
+        chip,
       },
       assetDetails(release, artifact.filename, artifact),
     ),
   ];
 }
 
-async function archiveEntries(release) {
+async function archiveEntries(release, blobCache) {
   const tag = encodeURIComponent(release.tag_name);
   const { data: tree } = await api(
     `${archiveRepo}/git/trees/${tag}?recursive=1`,
@@ -249,7 +249,9 @@ async function archiveEntries(release) {
   );
   const boards = await Promise.all(
     paths.map(async ({ path, sha }) => {
-      const { data: blob } = await api(`${archiveRepo}/git/blobs/${sha}`);
+      if (!blobCache.has(sha))
+        blobCache.set(sha, api(`${archiveRepo}/git/blobs/${sha}`));
+      const { data: blob } = await blobCache.get(sha);
       if (blob.encoding !== 'base64' || typeof blob.content !== 'string') {
         throw new Error(`${release.tag_name} 的板卡定义无法读取：${path}`);
       }
@@ -433,8 +435,11 @@ async function generate(output, includePrerelease) {
   ]);
   const esp = [];
   for (const release of espReleases) esp.push(...(await espEntries(release)));
-  const archived = await Promise.all(archiveReleases.map(archiveEntries));
-  const { catalog, images } = assemble([...esp, ...archived.flat()]);
+  const archived = [];
+  const blobCache = new Map();
+  for (const release of archiveReleases)
+    archived.push(...await archiveEntries(release, blobCache));
+  const { catalog, images } = assemble([...esp, ...archived]);
   console.log(`正在校验 ${images.length} 个完整 BIN…`);
   const firmware = join(output, 'firmware');
   await mkdir(firmware, { recursive: true });

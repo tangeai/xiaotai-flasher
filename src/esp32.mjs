@@ -1,8 +1,10 @@
+import { chips } from './chips.mjs';
 import SparkMD5 from 'spark-md5';
 import { ESPLoader, Transport } from './vendor/esptool-0.7.0.mjs';
 import {
   updateBootSettings,
   validateBootImage,
+  validateCompleteImage,
   validateLayout,
 } from './flash-image.mjs';
 
@@ -23,7 +25,7 @@ export async function connectEsp32(port, settings, print) {
   try {
     const description = await loader.main(settings.before);
     const chip = loader.chip;
-    if (!chip.CHIP_NAME.startsWith('ESP32'))
+    if (!chips.includes(chip.CHIP_NAME))
       throw new Error('请选择 ESP32 系列设备的串口。');
     if (loader.secureDownloadMode)
       throw new Error('设备处于安全下载模式，请使用与设备配套的烧录流程。');
@@ -64,15 +66,8 @@ export async function connectEsp32(port, settings, print) {
             (bootOffset >= 0 && bootOffset < image.data.byteLength)
           ) {
             const boot = await validateBootImage(data, bootOffset, chip);
-            const bootEnd = boot.digestOffset + (boot.hasDigest ? 32 : 0);
-            if (
-              options.complete &&
-              !data.subarray(bootEnd).some((byte) => byte !== 0xff)
-            ) {
-              throw new Error(
-                '这个 BIN 只有启动镜像。请选择包含应用的完整 BIN。',
-              );
-            }
+            if (options.complete)
+              await validateCompleteImage(data, boot, chip, capacity);
             bootFound = true;
             if (overrides)
               data = await updateBootSettings(

@@ -1,3 +1,5 @@
+import { chips } from './chips.mjs';
+
 const versionDigest = /^[a-f0-9]{64}$/i;
 const boardSlug = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const releaseStates = new Set(['draft', 'published', 'offline']);
@@ -39,11 +41,7 @@ export function publishedBoards(data, catalogURL) {
     }
     slugs.add(board.slug);
     const chip = board.chip.trim().toUpperCase();
-    if (
-      !['BK7258', 'EC718PM'].includes(chip) &&
-      !/^ESP32(?:-[A-Z0-9]+)?$/.test(chip)
-    )
-      return [];
+    if (chip !== 'BK7258' && !chips.includes(chip)) return [];
     const flashBytes = board.flash_bytes;
     if (
       flashBytes !== undefined &&
@@ -75,11 +73,7 @@ export function publishedBoards(data, catalogURL) {
           `${board.model} ${release.version} 的 BIN 链接或 SHA‑256 有误。`,
         );
       }
-      const agentURL =
-        chip === 'EC718PM' && release.agent_url !== undefined
-          ? linkedURL(release.agent_url, catalogURL).href
-          : undefined;
-      return [{ ...release, bin_url: binURL.href, agent_url: agentURL }];
+      return [{ ...release, bin_url: binURL.href }];
     });
     if (versions.filter((release) => release.recommended).length > 1) {
       throw new Error(`${board.model} 只能有一个推荐版本。`);
@@ -116,14 +110,12 @@ export async function loadBoards(configURL, signal) {
   return publishedBoards(catalog.data, catalog.url);
 }
 
-export async function downloadFirmware(
-  release,
-  capacity,
-  limitError = '固件超过已连接设备的 Flash 容量。',
-) {
+export async function downloadFirmware(release, capacity, signal) {
+  const timeout = AbortSignal.timeout(120000);
+  const downloadSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   const response = await fetch(release.bin_url, {
     credentials: 'omit',
-    signal: AbortSignal.timeout(120000),
+    signal: downloadSignal,
   });
   if (!response.ok || !response.body) throw new Error('固件下载失败。');
   const reader = response.body.getReader();
@@ -135,7 +127,7 @@ export async function downloadFirmware(
       if (chunk.done) break;
       if (written + chunk.value.length > capacity) {
         await reader.cancel();
-        throw new Error(limitError);
+        throw new Error('固件超过已连接设备的 Flash 容量。');
       }
       output.set(chunk.value, written);
       written += chunk.value.length;
@@ -145,6 +137,7 @@ export async function downloadFirmware(
   }
   const data = output.subarray(0, written);
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', data));
+  downloadSignal.throwIfAborted();
   const actual = Array.from(digest, (byte) =>
     byte.toString(16).padStart(2, '0'),
   ).join('');

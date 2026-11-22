@@ -1,3 +1,28 @@
+import { chips } from './chips.mjs';
+
+export const bkWriteRates = [
+  115200, 460800, 921600, 1000000, 1500000, 2000000, 3000000, 4000000, 5000000,
+  6000000,
+];
+
+export const bkSettingFields = [
+  [
+    'bk-write-rate',
+    '烧录波特率',
+    bkWriteRates.map((rate) => [String(rate)]),
+    '连接固定用 115200。开始烧录时切换到所选速率。2 Mbps 及以上请确认串口芯片和驱动支持，连接不稳时降低速率。',
+  ],
+  [
+    'bk-before-reset',
+    '连接前复位',
+    [
+      ['auto', '尝试 RTS 自动复位'],
+      ['manual', '手动复位'],
+    ],
+    '板卡接了 RTS 时可自动复位。未接 RTS 时请选择手动，等待握手提示后按芯片复位键。',
+  ],
+];
+
 export const settingFields = [
   [
     'write-rate',
@@ -10,17 +35,7 @@ export const settingFields = [
     '目标芯片',
     [
       ['auto', '自动识别'],
-      ...[
-        'ESP32',
-        'ESP32-S2',
-        'ESP32-S3',
-        'ESP32-C2',
-        'ESP32-C3',
-        'ESP32-C5',
-        'ESP32-C6',
-        'ESP32-H2',
-        'ESP32-P4',
-      ].map((name) => [name]),
+      ...chips.map((name) => [name]),
     ],
     '连接时识别芯片型号。手动指定后，只有识别结果匹配才允许写入。',
   ],

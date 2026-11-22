@@ -1,7 +1,14 @@
+import SparkMD5 from 'spark-md5';
+
 const sectorSize = 4096;
 const imageHeaderSize = 24;
 const segmentHeaderSize = 8;
 const digestSize = 32;
+const partitionEntrySize = 32;
+const partitionTableSize = 0xc00;
+const partitionMagic = 0x50aa;
+const partitionDigestMagic = 0xebeb;
+const appPartitionAlignment = 0x10000;
 const flashModes = { qio: 0, qout: 1, dio: 2, dout: 3 };
 
 export function parseAddress(value) {
@@ -32,7 +39,16 @@ export function validateLayout(images, capacity) {
 }
 
 export async function validateBootImage(data, offset, chip) {
-  if (offset + 36 > data.length || data[offset] !== 0xe9) {
+  return validateImage(data, offset, chip, true);
+}
+
+async function validateImage(data, offset, chip, boot) {
+  const invalid = () =>
+    new Error(
+      `${boot ? '启动' : '应用'}镜像不完整，或镜像校验失败。请重新获取固件。`,
+    );
+  if (offset < 0 || offset + 36 > data.length || data[offset] !== 0xe9) {
+    if (!boot) throw invalid();
     throw new Error(
       '完整镜像缺少当前芯片所需的启动镜像。请确认文件是适配本板的完整 BIN。',
     );
@@ -45,15 +61,13 @@ export async function validateBootImage(data, offset, chip) {
   if (header.getUint16(12, true) !== chip.IMAGE_CHIP_ID) {
     throw new Error('镜像头中的芯片型号与连接设备不匹配。');
   }
-  if (header.getUint32(32, true) === 0xabcd5432) {
+  if (boot && header.getUint32(32, true) === 0xabcd5432) {
     throw new Error(
       '这个 BIN 是 ESP-IDF 应用镜像。请改用完整镜像，或按固件说明进行分段烧录。',
     );
   }
   const segmentCount = header.getUint8(1);
   const digestFlag = header.getUint8(23);
-  const invalid = () =>
-    new Error('启动镜像不完整，或镜像校验失败。请重新获取固件。');
   if (!segmentCount || segmentCount > 16 || digestFlag > 1) throw invalid();
 
   let cursor = imageHeaderSize;
@@ -80,6 +94,81 @@ export async function validateBootImage(data, offset, chip) {
     }
   }
   return { digestOffset, hasDigest: Boolean(digestFlag) };
+}
+
+function readAppPartitions(data, entries, tableOffset, capacity) {
+  const apps = [];
+  const end = Math.min(tableOffset + partitionTableSize, data.length);
+  let hasDigest = false;
+  for (
+    let offset = tableOffset;
+    offset + partitionEntrySize <= end;
+    offset += partitionEntrySize
+  ) {
+    const magic = entries.getUint16(offset, true);
+    const rawEntry = data.subarray(offset, offset + partitionEntrySize);
+    if (rawEntry.every((byte) => byte === 0xff)) return apps;
+    if (hasDigest) break;
+    if (magic === partitionDigestMagic) {
+      const prefix = data.buffer.slice(
+        data.byteOffset + tableOffset,
+        data.byteOffset + offset,
+      );
+      const digest = SparkMD5.ArrayBuffer.hash(prefix, true);
+      if (
+        !rawEntry.subarray(2, 16).every((byte) => byte === 0xff) ||
+        !rawEntry
+          .subarray(16)
+          .every((byte, index) => byte === digest.charCodeAt(index))
+      )
+        break;
+      hasDigest = true;
+      continue;
+    }
+    if (magic !== partitionMagic) break;
+    if (entries.getUint8(offset + 2) !== 0) continue;
+    const address = entries.getUint32(offset + 4, true);
+    const size = entries.getUint32(offset + 8, true);
+    if (
+      address < tableOffset + sectorSize ||
+      address % appPartitionAlignment !== 0 ||
+      !size ||
+      address + size > capacity
+    ) break;
+    apps.push({ address, size });
+  }
+  return [];
+}
+
+export async function validateCompleteImage(data, boot, chip, capacity) {
+  const bootEnd = boot.digestOffset + (boot.hasDigest ? digestSize : 0);
+  const entries = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  // ESP-IDF allows the partition table to move to another flash sector.
+  for (
+    let offset = Math.ceil(bootEnd / sectorSize) * sectorSize;
+    offset + partitionEntrySize <= data.length;
+    offset += sectorSize
+  ) {
+    if (entries.getUint16(offset, true) !== partitionMagic) continue;
+    const apps = readAppPartitions(data, entries, offset, capacity);
+    for (const { address, size } of apps) {
+      if (data[address] !== 0xe9) continue;
+      try {
+        await validateImage(
+          data.subarray(0, address + size),
+          address,
+          chip,
+          false,
+        );
+        return;
+      } catch {
+        // A different partition may contain the image, such as an OTA slot.
+      }
+    }
+  }
+  throw new Error(
+    '完整 BIN 缺少有效的 ESP32 应用镜像或分区表。请重新获取适配本板的固件。',
+  );
 }
 
 async function bootDigest(data, offset, digestOffset) {
