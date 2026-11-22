@@ -12,7 +12,11 @@ const recommendedVersion = (board) =>
   board?.versions.find((version) => version.recommended)?.version ??
   board?.versions[0]?.version ??
   '';
-const platformFor = (chip) => (chip === 'BK7258' ? 'bk7258' : 'esp32');
+const platformFor = (chip) => {
+  if (chip === 'EC718PM') return 'ec718';
+  if (chip === 'BK7258') return 'bk7258';
+  return 'esp32';
+};
 let nextSegmentId = 0;
 const newSegment = () => ({ id: nextSegmentId++, file: null, offset: '' });
 
@@ -28,10 +32,19 @@ function Check({ children, help, ...props }) {
   );
 }
 
-function FlashOptions({ settings, change, disabled, official, connected, bk }) {
-  const fields = bk
-    ? settingFields.filter(([key]) => key === 'after-reset')
-    : settingFields;
+function FlashOptions({
+  settings,
+  change,
+  disabled,
+  official,
+  connected,
+  bk,
+  ec718,
+}) {
+  const fields =
+    bk || ec718
+      ? settingFields.filter(([key]) => key === 'after-reset')
+      : settingFields;
   return (
     <details className="settings-group" id="advanced">
       <summary>高级设置</summary>
@@ -58,9 +71,11 @@ function FlashOptions({ settings, change, disabled, official, connected, bk }) {
             <small>{help}</small>
           </label>
         ))}
-        {bk ? (
+        {bk || ec718 ? (
           <small className="span">
-            烧录通过 UART0，固定 115200 波特率。连接时按提示复位设备。
+            {ec718
+              ? '原生 USB 下载口固定使用 921600。分区地址来自固件包。'
+              : '烧录通过 UART0，固定 115200 波特率。连接时按提示复位设备。'}
           </small>
         ) : (
           <>
@@ -101,10 +116,15 @@ function FirmwarePicker({
   change,
   busy,
   bk,
+  ec718,
 }) {
   const board = catalog.boards.find(
     (candidate) => candidate.slug === selection.slug,
   );
+  const onlineAgent =
+    origin === 'official' &&
+    board?.versions.find(({ version }) => version === selection.version)
+      ?.agent_url;
   function changeSegment(id, patch) {
     change({
       segments: selection.segments.map((segment) =>
@@ -137,11 +157,13 @@ function FirmwarePicker({
             disabled={busy}
             onChange={() => choose('local')}
           />{' '}
-          本地 BIN
+          {ec718 ? '本地固件包' : '本地 BIN'}
         </label>
       </div>
       <small id="catalog-status" role="status">
-        {catalog.message}
+        {ec718 && !catalog.boards.length && !catalog.message.startsWith('正在')
+          ? '当前目录没有 Air780EPM 固件，可以导入本地固件包。'
+          : catalog.message}
       </small>
       <div id="official" className="options" hidden={origin !== 'official'}>
         <label className="field">
@@ -187,27 +209,36 @@ function FirmwarePicker({
         </label>
         {board && (
           <p className="callout span" id="manifest">
-            {board.chip} · 完整镜像 · 起始地址 0x0
+            {board.chip} ·{' '}
+            {ec718 ? '按固件包分区写入' : '完整镜像 · 起始地址 0x0'}
           </p>
         )}
       </div>
       <div hidden={origin !== 'local'}>
-        <label className="field" hidden={!bk && selection.segmented}>
-          完整镜像 · 起始地址 <code>0x0</code>
+        <label className="field" hidden={!bk && !ec718 && selection.segmented}>
+          {ec718 ? (
+            'Air780EPM 固件包'
+          ) : (
+            <>
+              完整镜像 · 起始地址 <code>0x0</code>
+            </>
+          )}
           <input
             type="file"
             id="merged-bin"
-            accept=".bin"
+            accept={ec718 ? '.binpkg' : '.bin'}
             disabled={busy}
             onChange={(event) => change({ merged: event.target.files[0] })}
           />
           <small>
-            {bk
-              ? '选择适配开发板的 BK7258 原始 all-app.bin。'
-              : '选择适配开发板的完整 BIN。'}
+            {ec718
+              ? '从合宙 .soc 中提取 info.json 的 rom.file 所指向的 .binpkg。'
+              : bk
+                ? '选择适配开发板的 BK7258 原始 all-app.bin。'
+                : '选择适配开发板的完整 BIN。'}
           </small>
         </label>
-        <details className="settings-group" id="segments" hidden={bk}>
+        <details className="settings-group" id="segments" hidden={bk || ec718}>
           <summary>分段烧录</summary>
           <Check
             checked={selection.segmented}
@@ -274,11 +305,38 @@ function FirmwarePicker({
           </div>
         </details>
       </div>
+      {ec718 &&
+        (onlineAgent ? (
+          <small>
+            USB AgentBoot 随在线固件下载，只在下载过程加载到设备 RAM。
+          </small>
+        ) : (
+          <label className="field actions">
+            USB AgentBoot
+            <input
+              type="file"
+              accept=".bin"
+              disabled={busy}
+              onChange={(event) => change({ agent: event.target.files[0] })}
+            />
+            <small>
+              选择 Air780EPM 适用的 ec718m_usb.bin（50788
+              字节）。它只在下载过程加载到设备 RAM。{' '}
+              <a
+                href="https://github.com/wendal/luatos-cli/blob/main/docs/ec718-flash-protocol.md#agentboot二进制"
+                target="_blank"
+                rel="noreferrer"
+              >
+                文件来源
+              </a>
+            </small>
+          </label>
+        ))}
     </>
   );
 }
 
-function LogConsole({ workbench, rate, setRate }) {
+function LogConsole({ workbench, rate, setRate, ec718 }) {
   const {
     tab,
     busy,
@@ -395,23 +453,27 @@ function LogConsole({ workbench, rate, setRate }) {
             className="btn primary"
             type="button"
             disabled={!serialAvailable || busy}
-            onClick={() => workbench.toggleMonitor(rate)}
+            onClick={() => workbench.toggleMonitor(rate, ec718)}
           >
             {monitoring ? '断开日志串口' : '连接日志串口'}
           </button>
-          <label className="row">
-            日志波特率
-            <select
-              value={rate}
-              onChange={(event) => setRate(event.target.value)}
-              disabled={monitoring || busy}
-              aria-describedby="log-rate-help"
-            >
-              {logRates.map((baud) => (
-                <option key={baud}>{baud}</option>
-              ))}
-            </select>
-          </label>
+          {ec718 ? (
+            <small>Air780EPM SOC 日志口（x.2） · 921600</small>
+          ) : (
+            <label className="row">
+              日志波特率
+              <select
+                value={rate}
+                onChange={(event) => setRate(event.target.value)}
+                disabled={monitoring || busy}
+                aria-describedby="log-rate-help"
+              >
+                {logRates.map((baud) => (
+                  <option key={baud}>{baud}</option>
+                ))}
+              </select>
+            </label>
+          )}
           <small className="sr-only" id="log-rate-help">
             UART 读取速率需与固件控制台配置一致。原生 USB 日志请按板卡说明连接。
           </small>
@@ -501,6 +563,7 @@ function FlashSummary({ firmware, chip }) {
   const official = firmware.kind === 'official';
   const segmented = firmware.kind === 'segments';
   const address = official ? 0 : firmware.entries[0].address;
+  const { packageImage } = firmware;
 
   return (
     <dl className="flash-summary">
@@ -508,23 +571,42 @@ function FlashSummary({ firmware, chip }) {
         <dt>目标芯片</dt>
         <dd>{chip ?? '设备已断开'}</dd>
       </div>
+      {firmware.boardModel && (
+        <div>
+          <dt>开发板</dt>
+          <dd>{firmware.boardModel}</dd>
+        </div>
+      )}
       {official && (
-        <>
-          <div>
-            <dt>开发板</dt>
-            <dd>{firmware.boardModel}</dd>
-          </div>
-          <div>
-            <dt>固件版本</dt>
-            <dd>{firmware.release.version}</dd>
-          </div>
-        </>
+        <div>
+          <dt>固件版本</dt>
+          <dd>{firmware.release.version}</dd>
+        </div>
       )}
       <div>
         <dt>烧录方式</dt>
-        <dd>{segmented ? '分段烧录' : '完整镜像'}</dd>
+        <dd>
+          {packageImage
+            ? '按固件包写入 BL、AP、CP 分区'
+            : segmented
+              ? '分段烧录'
+              : '完整镜像'}
+        </dd>
       </div>
-      {segmented ? (
+      {packageImage ? (
+        <>
+          {!official && (
+            <div>
+              <dt>固件包</dt>
+              <dd>{firmware.entries[0].name}</dd>
+            </div>
+          )}
+          <div>
+            <dt>USB AgentBoot</dt>
+            <dd>{firmware.agent?.name ?? '在线下载并校验'}</dd>
+          </div>
+        </>
+      ) : segmented ? (
         <div>
           <dt>文件及地址</dt>
           <dd>
@@ -595,12 +677,24 @@ function HelpDialog({ dialogRef, onClose }) {
           BK7258 使用下载串口
           UART0。点击「连接设备」后，按复位键或保持串口连接并重新给开发板上电，等待握手。
         </p>
+        <p>
+          Air780EPM 通过原生 USB 烧录。按住 BOOT 再复位或重新上电，松开 BOOT
+          后选择新出现的下载串口。{' '}
+          <a
+            href="https://docs.openluat.com/air780epm/luatos/hardware/download/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            合宙 Air780EPM 下载说明
+          </a>
+        </p>
       </details>
       <details className="settings-group">
         <summary>看不到设备日志</summary>
         <p>
           确认固件的日志输出接口和波特率。若重启后设备的串口变化，请重新选择日志串口。
-          BK7258 的 UART0 日志默认使用 115200 波特率。
+          BK7258 的 UART0 日志默认使用 115200 波特率。Air780EPM 请选 SOC
+          日志口（USB 接口 x.2，921600），可在系统设备管理器查看接口编号。
         </p>
       </details>
       <details className="settings-group">
@@ -639,6 +733,7 @@ export function App() {
     slug: '',
     version: '',
     merged: null,
+    agent: null,
     segmented: false,
     segments: [newSegment()],
   }));
@@ -732,6 +827,7 @@ export function App() {
   }
 
   const bk = platform === 'bk7258';
+  const ec718 = platform === 'ec718';
   const platformBoards = catalog.boards.filter(
     (board) => platformFor(board.chip) === platform,
   );
@@ -751,6 +847,8 @@ export function App() {
   function changePlatform(value) {
     userSelected.current = true;
     setPlatform(value);
+    changeSelection({ merged: null, agent: null });
+    workbench.resetForPlatform();
     if (!catalog.boards.some((board) => platformFor(board.chip) === value))
       setOrigin('local');
   }
@@ -766,8 +864,12 @@ export function App() {
           ...selected,
           board,
           origin,
-          segmented: !bk && selected.segmented,
-          expectedChip: bk ? 'BK7258' : settings['expected-chip'],
+          segmented: !bk && !ec718 && selected.segmented,
+          expectedChip: ec718
+            ? 'EC718PM'
+            : bk
+              ? 'BK7258'
+              : settings['expected-chip'],
         },
         device?.capacity,
       );
@@ -781,8 +883,9 @@ export function App() {
         readinessMessage = `固件需要 ${firmware.flashBytes / 1048576} MiB Flash，当前设备为 ${device.capacity / 1048576} MiB。`;
       } else {
         ready = firmware;
-        readinessMessage =
-          firmware.kind === 'segments'
+        readinessMessage = firmware.packageImage
+          ? '将按固件包的分区顺序写入。'
+          : firmware.kind === 'segments'
             ? '固件和串口已就绪。'
             : '完整镜像将从 0x0 写入。';
       }
@@ -804,7 +907,7 @@ export function App() {
         flashMode: settings['flash-mode'],
         flashFreq: settings['flash-freq'],
         flashSize: settings['flash-size'],
-        eraseAll: !bk && settings.eraseAll,
+        eraseAll: !bk && !ec718 && settings.eraseAll,
         compress: settings.compress,
       },
     });
@@ -834,9 +937,9 @@ export function App() {
           <span className="brand-name">小钛</span>
         </a>
         <div className="app-title">
-          <h1>ESP32 / BK7258 在线烧录与串口日志</h1>
+          <h1>ESP32 / BK7258 / EC718 在线烧录与串口日志</h1>
           <p className="muted">
-            适用芯片：ESP32、S2、S3、C2、C3、C5、C6、H2、P4、BK7258
+            适用芯片：ESP32、S2、S3、C2、C3、C5、C6、H2、P4、BK7258、EC718PM（Air780EPM）
           </p>
         </div>
         <nav className="header-actions" aria-label="工作台工具">
@@ -871,11 +974,12 @@ export function App() {
             芯片平台
             <select
               value={platform}
-              disabled={busy || Boolean(device)}
+              disabled={busy || Boolean(device) || workbench.monitoring}
               onChange={(event) => changePlatform(event.target.value)}
             >
               <option value="esp32">ESP32 系列</option>
               <option value="bk7258">BK7258</option>
+              <option value="ec718">EC718PM（Air780EPM）</option>
             </select>
           </label>
           <p
@@ -907,14 +1011,21 @@ export function App() {
                 });
               }}
             >
-              连接设备
+              {ec718 ? '连接 USB BOOT' : '连接设备'}
             </button>
+          )}
+          {ec718 && !device && !busy && (
+            <small>
+              确认板型为 Air780EPM。按住 BOOT
+              键复位或重新上电，松开后选择下载口。
+            </small>
           )}
         </section>
         <div className="workbench">
           <section className="flash-panel" aria-labelledby="firmware-title">
             <div className="flash-settings">
               <FirmwarePicker
+                key={platform}
                 catalog={{ ...catalog, boards: platformBoards }}
                 origin={origin}
                 choose={(value) => {
@@ -925,6 +1036,7 @@ export function App() {
                 change={changeSelection}
                 busy={busy}
                 bk={bk}
+                ec718={ec718}
               />
               <FlashOptions
                 settings={settings}
@@ -933,12 +1045,15 @@ export function App() {
                 official={origin === 'official'}
                 connected={Boolean(device)}
                 bk={bk}
+                ec718={ec718}
               />
               {completed && (
                 <div className="actions">
                   {complete && (
                     <p className="callout">
-                      完整镜像已写入。请重新配网和绑定设备。
+                      {ec718
+                        ? 'BL、AP、CP 分区已写入。'
+                        : '完整镜像已写入。请重新配网和绑定设备。'}
                     </p>
                   )}
                   <div className="row actions">
@@ -946,11 +1061,13 @@ export function App() {
                       className="btn"
                       type="button"
                       disabled={busy}
-                      onClick={() => workbench.showDeviceLog(rate)}
+                      onClick={() => workbench.showDeviceLog(rate, ec718)}
                     >
                       查看设备日志
                     </button>
-                    <a href="https://xiaotai.chat/devices">前往设备管理</a>
+                    {!ec718 && (
+                      <a href="https://xiaotai.chat/devices">前往设备管理</a>
+                    )}
                   </div>
                 </div>
               )}
@@ -980,9 +1097,15 @@ export function App() {
                   onChange={(event) =>
                     changeSetting('autoLog', event.target.checked)
                   }
-                  help="重启后尝试用已授权的串口读取运行输出。"
+                  help={
+                    ec718
+                      ? '重启后切换到日志面板，请手动连接 SOC 日志口。'
+                      : '重启后尝试用已授权的串口读取运行输出。'
+                  }
                 >
-                  烧录完成后打开串口日志
+                  {ec718
+                    ? '烧录完成后切换到串口日志'
+                    : '烧录完成后打开串口日志'}
                 </Check>
               </div>
               {progress && (
@@ -1000,7 +1123,12 @@ export function App() {
               )}
             </section>
           </section>
-          <LogConsole workbench={workbench} rate={rate} setRate={setRate} />
+          <LogConsole
+            workbench={workbench}
+            rate={rate}
+            setRate={setRate}
+            ec718={ec718}
+          />
         </div>
       </main>
       <HelpDialog dialogRef={helpDialog} onClose={() => setHelpOpen(false)} />
@@ -1012,11 +1140,13 @@ export function App() {
         <h2 id="confirm-title">确认烧录</h2>
         {pending && <FlashSummary firmware={pending} chip={device?.chip} />}
         <p className="muted actions">
-          {!bk && settings.eraseAll
-            ? '将擦除整片 Flash。请确认现有设备数据可以清除。'
-            : pending?.kind === 'segments'
-              ? '将擦除镜像覆盖的 Flash 扇区。'
-              : '烧录后请重新配网和绑定设备。'}
+          {ec718
+            ? '将覆盖固件包中的 BL、AP、CP 分区。'
+            : !bk && settings.eraseAll
+              ? '将擦除整片 Flash。请确认现有设备数据可以清除。'
+              : pending?.kind === 'segments'
+                ? '将擦除镜像覆盖的 Flash 扇区。'
+                : '烧录后请重新配网和绑定设备。'}
         </p>
         <form method="dialog" className="row dialog-actions actions">
           <button className="btn" value="cancel">

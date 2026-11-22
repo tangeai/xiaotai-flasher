@@ -1,3 +1,4 @@
+import { ec718AgentSize, ec718PackageLimit } from './ec718-image.mjs';
 import { parseAddress, validateLayout } from './flash-image.mjs';
 
 export const chips = [
@@ -13,7 +14,7 @@ export const chips = [
 ];
 
 export function prepareFirmware(
-  { origin, board, version, merged, segmented, segments, expectedChip },
+  { origin, board, version, merged, segmented, segments, expectedChip, agent },
   capacity,
 ) {
   if (origin === 'official') {
@@ -21,12 +22,33 @@ export function prepareFirmware(
       (candidate) => candidate.version === version,
     );
     if (!release) throw new Error('请选择开发板和固件版本。');
+    const packageImage = board.chip === 'EC718PM';
+    if (packageImage && !release.agent_url) checkAgent(agent);
     return {
       kind: 'official',
+      packageImage,
+      agent: packageImage && !release.agent_url ? agent : undefined,
       release,
       chip: board.chip,
       boardModel: board.model,
       flashBytes: board.flashBytes,
+    };
+  }
+  if (expectedChip === 'EC718PM') {
+    if (
+      !merged?.size ||
+      merged.size > ec718PackageLimit ||
+      !/\.binpkg$/i.test(merged.name)
+    )
+      throw new Error('请选择 Air780EPM 固件包（.binpkg）。');
+    checkAgent(agent);
+    return {
+      kind: 'package',
+      packageImage: true,
+      agent,
+      entries: [{ file: merged, name: merged.name, size: merged.size }],
+      chip: expectedChip,
+      boardModel: 'Air780EPM',
     };
   }
   const kind = segmented ? 'segments' : 'complete';
@@ -58,4 +80,11 @@ export function prepareFirmware(
     entries,
     chip: expectedChip,
   };
+}
+
+function checkAgent(agent) {
+  if (agent?.size !== ec718AgentSize || !/\.bin$/i.test(agent.name))
+    throw new Error(
+      '请选择匹配的 USB AgentBoot（ec718m_usb.bin，50788 字节）。',
+    );
 }

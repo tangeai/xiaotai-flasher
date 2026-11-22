@@ -39,7 +39,11 @@ export function publishedBoards(data, catalogURL) {
     }
     slugs.add(board.slug);
     const chip = board.chip.trim().toUpperCase();
-    if (chip !== 'BK7258' && !/^ESP32(?:-[A-Z0-9]+)?$/.test(chip)) return [];
+    if (
+      !['BK7258', 'EC718PM'].includes(chip) &&
+      !/^ESP32(?:-[A-Z0-9]+)?$/.test(chip)
+    )
+      return [];
     const flashBytes = board.flash_bytes;
     if (
       flashBytes !== undefined &&
@@ -71,7 +75,11 @@ export function publishedBoards(data, catalogURL) {
           `${board.model} ${release.version} 的 BIN 链接或 SHA‑256 有误。`,
         );
       }
-      return [{ ...release, bin_url: binURL.href }];
+      const agentURL =
+        chip === 'EC718PM' && release.agent_url !== undefined
+          ? linkedURL(release.agent_url, catalogURL).href
+          : undefined;
+      return [{ ...release, bin_url: binURL.href, agent_url: agentURL }];
     });
     if (versions.filter((release) => release.recommended).length > 1) {
       throw new Error(`${board.model} 只能有一个推荐版本。`);
@@ -108,7 +116,11 @@ export async function loadBoards(configURL, signal) {
   return publishedBoards(catalog.data, catalog.url);
 }
 
-export async function downloadFirmware(release, capacity) {
+export async function downloadFirmware(
+  release,
+  capacity,
+  limitError = '固件超过已连接设备的 Flash 容量。',
+) {
   const response = await fetch(release.bin_url, {
     credentials: 'omit',
     signal: AbortSignal.timeout(120000),
@@ -123,7 +135,7 @@ export async function downloadFirmware(release, capacity) {
       if (chunk.done) break;
       if (written + chunk.value.length > capacity) {
         await reader.cancel();
-        throw new Error('固件超过已连接设备的 Flash 容量。');
+        throw new Error(limitError);
       }
       output.set(chunk.value, written);
       written += chunk.value.length;

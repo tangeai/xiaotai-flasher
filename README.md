@@ -1,6 +1,6 @@
 # 小钛在线烧录工作台
 
-用浏览器通过 USB 串口烧录小钛或本地 ESP32、BK7258 固件，并在同一页面查看设备串口日志。前端使用 React + Vite，ESP32 烧录使用乐鑫 `esptool-js`，BK7258 使用 Beken UART 下载协议。工作台按静态站点部署，板卡目录通过独立 JSON 链接维护。
+用浏览器通过 USB 串口烧录小钛或本地 ESP32、BK7258、EC718PM 固件，并在同一页面查看设备串口日志。前端使用 React + Vite，ESP32 烧录使用乐鑫 `esptool-js`，BK7258 使用 Beken UART 下载协议。工作台按静态站点部署，板卡目录通过独立 JSON 链接维护。
 
 ## 功能
 
@@ -8,7 +8,8 @@
 | --- | --- |
 | ESP32 在线烧录 | 适用 ESP32、ESP32-S2、ESP32-S3、ESP32-C2、ESP32-C3、ESP32-C5、ESP32-C6、ESP32-H2、ESP32-P4 |
 | BK7258 在线烧录 | 支持原始 `all-app.bin` 从 `0x0` 写入，烧录后读取 Flash CRC 校验 |
-| 固件选择 | 已配置目录时默认显示小钛固件。也可导入本地完整 `.bin`。完整镜像固定从 `0x0` 写入 |
+| EC718 在线烧录 | 支持 Air780EPM 的 `.binpkg`，通过原生 USB BOOT 写入 BL、AP、CP 分区，并读取运行模式下的 SOC 串口日志 |
+| 固件选择 | 已配置目录时默认显示小钛固件。也可导入本地完整 `.bin`。ESP32 和 BK7258 的完整 BIN 从 `0x0` 写入 |
 | 写入校验 | 校验在线 BIN 的 SHA‑256。ESP32 写入后对比 Flash 的 MD5，BK7258 写入后对比 Flash 的 CRC |
 | 串口日志 | 独立连接运行中的设备，或在烧录结束后自动打开。可选波特率、暂停滚动、清空、复制和下载 |
 | 高级设置 | 支持多 BIN 分段地址、烧录波特率、Flash 模式、频率、容量及复位方式。全片擦除默认关闭 |
@@ -35,6 +36,15 @@ ESP32 完整 BIN 会覆盖镜像写入范围内的扇区。需要清掉全片旧
 
 本分支支持小钛立创和觅感 8 MiB Flash 板型使用的原始镜像布局。OTA 文件、安全下载包、分段地址、整片擦除和其他 BK 芯片暂未开放。Flash 型号无法识别时会停止烧录。 [Beken BK7258 开发指南](https://docs.riselink.ai/arminodoc/bk_avdk_smp/smp_doc/bk7258/en/v3.1.1/get-started/index.html#burn-code) · [小钛板型说明](https://github.com/tangeai/xiaotai#选择开发板和固件)
 
+### EC718PM（Air780EPM）烧录和看日志
+
+1. 确认模组型号为 **Air780EPM**。用可传数据的 USB 线连接模组的原生 USB 口。按住 BOOT 键复位或重新上电，松开后在工作台选择 **EC718PM（Air780EPM）**，点「连接 USB BOOT」。选择新出现的下载口（VID:PID `17D1:0001`）。该 USB 标识也用于其他移芯模组，工作台按所选板型限制固件，板型请以设备丝印为准。
+2. 选择在线版本，或用 7-Zip 打开合宙的 `.soc`，从包中的 `info.json` 查看 `rom.file` 并提取对应的 `.binpkg`。本地烧录同时选择 `ec718m_usb.bin`（50788 字节）。AgentBoot 校验后仅加载到模组 RAM。 [合宙固件版本](https://docs.openluat.com/air780epm/luatos/firmware/780epm_version/) · [AgentBoot 文件](https://media.githubusercontent.com/media/wendal/luatos-cli/62aa4ed4f44f5860137fb90fb3998ce401546d71/refs/origin_tools/ec_download/agentboot/ec718m_usb.bin)
+3. 点「开始烧录」，确认包内的 BL、AP、CP 分区将被覆盖。工作台按包内地址写入并检查各分区烧录状态。当前流程使用 Air780EPM 核心固件包，Lua 脚本和文件系统镜像请使用合宙工具单独管理。
+4. 设备重启后点「连接日志串口」，选择运行模式的 **SOC 日志口**（VID:PID `19D1:0001`、USB 接口 `x.2`、速率 `921600`）。有多个同名端口时，在系统设备管理器中核对接口编号。工作台解码该口的 LuatOS 日志帧，支持暂停滚动、复制和下载。
+
+[合宙 Air780EPM 下载接口说明](https://docs.openluat.com/air780epm/luatos/hardware/download/) · [LuatOS CLI 下载与日志协议](https://github.com/wendal/luatos-cli/blob/main/docs/ec718-flash-protocol.md)
+
 ## 配置小钛固件目录
 
 ### 设置目录链接
@@ -54,6 +64,20 @@ ESP32 完整 BIN 会覆盖镜像写入范围内的扇区。需要清掉全片旧
 1. 用 `sha256sum 新固件.bin` 计算摘要，将适配该板型、从 `0x0` 写入的完整 BIN 以 `<摘要>.bin` 的文件名上传到服务器的 `/opt/xiaotai-flasher/board-catalog/firmware/`。BK7258 需使用原始 `all-app.bin`。
 2. 在仓库根目录的 [`boards.json`](boards.json) 对应板型下添加版本。`bin_url` 填 `./firmware/<摘要>.bin`，`sha256` 填相同摘要。设为推荐版本时，去掉同一板型旧版本的 `recommended: true`。运行 `npm test` 检查格式和下载路径。
 3. BIN 可下载后，将更新后的 `boards.json` 上传到 `/opt/xiaotai-flasher/board-catalog/boards.json`，刷新页面确认新版本。前端无需重新构建。由人工维护目录时，避免运行会重新生成目录的 `catalog` 命令。
+
+EC718PM 版本手动配置。板卡的 `chip` 填 `EC718PM`，可将 `.binpkg` 以 `<摘要>.binpkg` 的文件名上传到同一 `firmware/` 目录，在现有版本结构中填写：
+
+```json
+{
+  "version": "V2029",
+  "bin_url": "./firmware/<固件包的 SHA-256>.binpkg",
+  "sha256": "<固件包的 SHA-256>",
+  "agent_url": "./firmware/0db9e8f3462140c7c368723aa144b976ac033ae45fc6d37db5d959b1c9238019.bin",
+  "status": "published"
+}
+```
+
+`agent_url` 指向已获分发许可的匹配 AgentBoot，省略时工作台提示用户本地选择。已有 Nginx 部署需更新路由片段并重载，才能从 `firmware/` 下载 `.binpkg`。
 
 ### 从 GitHub Releases 生成目录
 
@@ -175,4 +199,4 @@ npm run dev      # http://localhost:5173/
 ```
 
 执行 `npm run build` 生成 `dist/`，再用 `npm run preview` 检查构建结果。
-执行 `npm test` 可验证固件目录、启动镜像校验与 Flash 参数修改。
+执行 `npm test` 可验证固件目录、镜像校验、ESP32 Flash 参数，以及 BK7258、EC718 的模拟串口流程。

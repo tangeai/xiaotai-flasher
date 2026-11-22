@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { downloadFirmware } from './catalog.mjs';
+import { ec718AgentSha256, ec718AgentSize } from './ec718-image.mjs';
+import { createEc718LogDecoder } from './ec718-log.mjs';
+import {
+  connectEc718,
+  ec718Baud,
+  ec718BootPort,
+  ec718LogPort,
+  requireEc718Port,
+} from './ec718.mjs';
 
 const serial = globalThis.isSecureContext ? navigator.serial : undefined;
 const logLimit = 240000;
@@ -69,7 +78,7 @@ export function useWorkbench() {
   }
 
   async function readMonitor(active) {
-    const decoder = new TextDecoder();
+    const decoder = active.ec718 ? createEc718LogDecoder() : new TextDecoder();
     let message = '';
     try {
       while (!active.stopping) {
@@ -100,16 +109,31 @@ export function useWorkbench() {
     }
   }
 
-  async function startMonitor(port, rate) {
-    await port.open({ baudRate: Number(rate) });
+  async function startMonitor(port, rate, ec718 = false) {
+    if (ec718)
+      requireEc718Port(
+        port,
+        ec718LogPort,
+        '请选择 Air780EPM 的 SOC 日志串口。',
+      );
+    await port.open({ baudRate: ec718 ? ec718Baud : Number(rate) });
     let reader;
     try {
+      if (ec718) {
+        await port.setSignals({ dataTerminalReady: true, requestToSend: true });
+        const writer = port.writable.getWriter();
+        try {
+          await writer.write(new Uint8Array([0x7e, 0, 0, 0x7e]));
+        } finally {
+          writer.releaseLock();
+        }
+      }
       reader = port.readable.getReader();
     } catch (error) {
       await port.close().catch(() => {});
       throw error;
     }
-    const active = { port, reader, stopping: false };
+    const active = { port, reader, stopping: false, ec718 };
     monitor.current = active;
     update({ monitoring: true, monitorMessage: '' });
     active.done = readMonitor(active);
@@ -119,19 +143,26 @@ export function useWorkbench() {
     return run(
       async () => {
         // Keep the serial chooser inside the initiating click gesture.
-        const port = await serial.requestPort();
+        const ec718 = options.platform === 'ec718';
+        const port = await serial.requestPort(
+          ec718 ? { filters: [ec718BootPort] } : undefined,
+        );
         await releaseMonitor();
         update({ flashLog: '', progress: null, complete: false });
         const bk = options.platform === 'bk7258';
         flashStatus(
           bk
             ? '等待 BK7258 下载串口。请复位或重新上电。'
-            : '正在连接并识别 ESP32…',
+            : ec718
+              ? '正在连接 Air780EPM USB BOOT 端口…'
+              : '正在连接并识别 ESP32…',
         );
-        if (bk) setTab('flash');
+        if (bk || ec718) setTab('flash');
         const connectDevice = bk
           ? (await import('./bk7258.mjs')).connectBk7258
-          : (await import('./esp32.mjs')).connectEsp32;
+          : ec718
+            ? connectEc718
+            : (await import('./esp32.mjs')).connectEsp32;
         const session = await connectDevice(port, options, (line) =>
           appendLog('flashLog', line),
         );
@@ -161,23 +192,29 @@ export function useWorkbench() {
     );
   }
 
-  function toggleMonitor(rate) {
+  function toggleMonitor(rate, ec718 = false) {
     return run(async () => {
       if (monitor.current) {
         await releaseMonitor();
         return;
       }
-      const port = await serial.requestPort();
+      const port = await serial.requestPort(
+        ec718 ? { filters: [ec718LogPort] } : undefined,
+      );
       if (flash.current?.port === port) {
         await releaseFlash();
         flashStatus('已释放烧录串口。若设备停在下载模式，请手动复位。');
       }
-      await startMonitor(port, rate);
+      await startMonitor(port, rate, ec718);
     }, monitorStatus);
   }
 
-  function showDeviceLog(rate) {
+  function showDeviceLog(rate, ec718) {
     setTab('log');
+    if (ec718) {
+      if (!monitor.current) return toggleMonitor(rate, true);
+      return;
+    }
     const port = lastFlashedPort.current;
     if (!port || monitor.current?.port === port) return;
     if (flash.current?.port === port) {
@@ -213,18 +250,42 @@ export function useWorkbench() {
           await releaseMonitor();
           const images =
             firmware.kind === 'official'
-              ? [await downloadFirmware(firmware.release, session.capacity)]
+              ? [
+                  await downloadFirmware(
+                    firmware.release,
+                    session.downloadLimit ?? session.capacity,
+                    session.downloadLimit
+                      ? '固件包超过 Air780EPM 支持的大小。'
+                      : undefined,
+                  ),
+                ]
               : await Promise.all(
                   firmware.entries.map(async ({ file, ...entry }) => ({
                     ...entry,
                     data: new Uint8Array(await file.arrayBuffer()),
                   })),
                 );
+          let agent;
+          if (firmware.packageImage) {
+            agent = firmware.agent
+              ? new Uint8Array(await firmware.agent.arrayBuffer())
+              : (
+                  await downloadFirmware(
+                    {
+                      bin_url: firmware.release.agent_url,
+                      sha256: ec718AgentSha256,
+                      version: 'EC718 USB AgentBoot',
+                    },
+                    ec718AgentSize,
+                    'USB AgentBoot 文件大小超出限制。',
+                  )
+                ).data;
+          }
           if (flash.current !== active)
             throw new Error('设备已断开，请重新连接。');
           await session.write(
             images,
-            { ...options.flash, complete },
+            { ...options.flash, complete, agent },
             (fraction) => {
               written = Math.min(
                 99,
@@ -245,7 +306,7 @@ export function useWorkbench() {
         }
 
         progress('烧录完成，校验通过', 100, 'success');
-        lastFlashedPort.current = port;
+        lastFlashedPort.current = session.separateLogPort ? null : port;
         update({ complete });
         let resetFailed = false;
         try {
@@ -268,10 +329,14 @@ export function useWorkbench() {
         );
         if (options.restart && options.autoLog && !resetFailed) {
           setTab('log');
-          try {
-            await startMonitor(port, options.logRate);
-          } catch {
-            monitorStatus('设备已复位。请选择设备当前的日志串口。');
+          if (session.separateLogPort) {
+            monitorStatus('设备已复位。请连接 Air780EPM 的 SOC 日志串口。');
+          } else {
+            try {
+              await startMonitor(port, options.logRate);
+            } catch {
+              monitorStatus('设备已复位。请选择设备当前的日志串口。');
+            }
           }
         }
       },
@@ -309,6 +374,16 @@ export function useWorkbench() {
     toggleMonitor,
     setTab,
     showDeviceLog,
+    resetForPlatform: () => {
+      lastFlashedPort.current = null;
+      update({
+        complete: false,
+        progress: null,
+        flashLog: '',
+        monitorMessage: '',
+      });
+      flashStatus(initialState.deviceMessage);
+    },
     clearLog: () => update({ bootLog: '' }),
   };
 }
