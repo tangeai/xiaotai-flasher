@@ -64,8 +64,8 @@ ESP32 完整 BIN 写入前会检查启动镜像、分区表及对应芯片的应
 
 如果旧部署没有固件目录，先运行 `sudo mkdir -p /opt/xiaotai-flasher/board-catalog/firmware`。
 
-1. 用 `sha256sum 新固件.bin` 计算摘要，将适配该板型、从 `0x0` 写入的完整 BIN 以 `<摘要>.bin` 的文件名上传到服务器的 `/opt/xiaotai-flasher/board-catalog/firmware/`。BK7258 需使用原始 `all-app.bin`。
-2. 在仓库根目录的 [`boards.json`](boards.json) 对应板型下添加版本。`bin_url` 填 `./firmware/<摘要>.bin`，`sha256` 填相同摘要。设为推荐版本时，去掉同一板型旧版本的 `recommended: true`。运行 `npm test` 检查格式和下载路径。
+1. 用 `sha256sum 新固件.bin` 计算摘要，将适配该板型、从 `0x0` 写入的完整 BIN 保留 Release 附件原名上传到服务器的 `/opt/xiaotai-flasher/board-catalog/firmware/`。BK7258 需使用原始 `all-app.bin`。
+2. 在仓库根目录的 [`boards.json`](boards.json) 对应板型下添加版本。`bin_url` 填 `./firmware/<原始文件名>`，`sha256` 填相同摘要。设为推荐版本时，去掉同一板型旧版本的 `recommended: true`。运行 `npm test` 检查格式和下载路径。
 3. BIN 可下载后，将更新后的 `boards.json` 上传到 `/opt/xiaotai-flasher/board-catalog/boards.json`，刷新页面确认新版本。前端无需重新构建。由人工维护目录时，避免运行会重新生成目录的 `catalog` 命令。
 
 ### 从 GitHub Releases 生成目录
@@ -78,7 +78,7 @@ node scripts/generate-boards.mjs --output-dir ./releases/board-catalog
 
 输出包含 `boards.json` 和 `firmware/`。将两者一起发布到同一 HTTPS 目录，再把 `boards_url` 指向生成的 `boards.json`。BIN 地址使用相对路径，由目录所在站点提供下载。站点与工作台不同源时，为 JSON 和 BIN 配置 CORS。
 
-默认收录正式版 ESP32 完整镜像和 BK7258 原始 `all-app.bin`。需要体验版时加 `--include-prerelease`，目录会标注体验版并优先推荐正式版。同一板型在两个仓库都有正式版时，优先推荐 `xiaotai-esp32` 的最新发布。生成器复用已经校验的 BIN，并在新目录的固件全部校验通过后替换 `boards.json`。GitHub API 限流时可提供 `GITHUB_TOKEN`。
+默认收录正式版 ESP32 完整镜像和 BK7258 原始 `all-app.bin`。需要测试版时加 `--include-prerelease`，目录会标注测试版并优先推荐正式版。同一板型在两个仓库都有正式版时，优先推荐 `xiaotai-esp32` 的最新发布。生成器复用已经校验的 BIN，并在新目录的固件全部校验通过后替换 `boards.json`。GitHub API 限流时可提供 `GITHUB_TOKEN`。
 
 ### 板卡 JSON 格式
 
@@ -94,7 +94,7 @@ node scripts/generate-boards.mjs --output-dir ./releases/board-catalog
       "releases": [
         {
           "version": "v0.3.0 · xiaotai-esp32",
-          "bin_url": "./firmware/b368c59e5c300b9b7f021baa1c66aa34c1a12b5e00d6e2529f1dabd0a2ef3159.bin",
+          "bin_url": "./firmware/xiaotai-szpi-s3-v0.3.0-full-16MB.bin",
           "sha256": "b368c59e5c300b9b7f021baa1c66aa34c1a12b5e00d6e2529f1dabd0a2ef3159",
           "status": "published",
           "recommended": true
@@ -109,7 +109,7 @@ node scripts/generate-boards.mjs --output-dir ./releases/board-catalog
 - 可用 `flash_bytes` 声明要求的 Flash 容量。声明后，设备检测到的容量必须一致。
 - 每块板的 `version` 唯一。`status` 支持 `draft`、`published`、`offline`，页面仅显示 `published`。每块板最多有一个推荐版本。
 - `bin_url` 指向完整 BIN，相对地址以板卡 JSON 的位置为准。`sha256` 填实际文件的 64 位十六进制摘要。
-- 使用仓库自带的同源 Nginx 路由时，BIN 必须位于 `firmware/`，文件名为 `<SHA-256 小写十六进制>.bin`。生成脚本会自动采用此命名。
+- 使用仓库自带的同源 Nginx 路由时，BIN 必须位于 `firmware/`，使用原始附件名，以字母或数字开头，允许 ASCII 字母、数字、点、下划线、加号和连字符，以 `.bin` 结尾。不同内容使用不同文件名。由旧版迁移时先更新 Nginx 片段并重载，再上传所有原名 BIN，最后替换 `boards.json`。
 - JSON 和 BIN 跨域托管时，下载域名需允许工作台域名读取。例如 `Access-Control-Allow-Origin: https://xiaotai.chat`。
 - 在同一个目录链接下发新版固件时，上传新 BIN 并更新板卡 JSON 即可。
 
@@ -119,19 +119,19 @@ node scripts/generate-boards.mjs --output-dir ./releases/board-catalog
 
 ### 1. 安装工作台和固件目录
 
-首次安装时，把包含 ESP32 和 BK7258 支持的分支克隆到部署目录。在此分支合入 `main` 前，部署使用 `feat/bk7258-web-flasher`。
+首次安装时，将主分支克隆到部署目录。
 
 ```bash
 sudo mkdir -p /opt/xiaotai-flasher
-sudo git clone --branch feat/bk7258-web-flasher \
+sudo git clone --branch main \
   https://github.com/tangeai/xiaotai-flasher.git /opt/xiaotai-flasher/xiaotai-flasher
 ```
 
-已有 `main` 部署时，在干净的源码目录执行下列命令切换分支，再运行安装脚本或执行 `deploy-prod.sh update`。若本地已在目标分支，可直接更新。
+从特性分支迁移时，在干净的源码目录切换到主分支。已有主分支部署可直接更新。
 
 ```bash
 sudo git -C /opt/xiaotai-flasher/xiaotai-flasher fetch origin
-sudo git -C /opt/xiaotai-flasher/xiaotai-flasher switch feat/bk7258-web-flasher
+sudo git -C /opt/xiaotai-flasher/xiaotai-flasher switch main
 ```
 
 安装脚本复用当前检出，构建工作台并创建 `board-catalog/firmware/`。
@@ -186,7 +186,7 @@ sudo /opt/xiaotai-flasher/deploy-prod.sh update
 
 仅固件更新时，沿用已选的目录维护方式。构建成功后 `update` 会切换前端版本。需要回滚前端时，用 `/opt/xiaotai-flasher/deploy-prod.sh status` 查看版本名，再运行 `sudo /opt/xiaotai-flasher/deploy-prod.sh rollback <版本名>`。
 
-如果 `catalog` 下载失败，先根据日志检查该 GitHub 地址，再重跑 `catalog`。Release 附件通常会跳转到 `release-assets.githubusercontent.com`，服务器也需要能访问该域名。首次上线可以先生成正式版目录，再加 `--include-prerelease` 更新体验版。脚本会重试临时网络错误，并复用已校验的 BIN。
+如果 `catalog` 下载失败，先根据日志检查该 GitHub 地址，再重跑 `catalog`。Release 附件通常会跳转到 `release-assets.githubusercontent.com`，服务器也需要能访问该域名。首次上线可以先生成正式版目录，再加 `--include-prerelease` 更新测试版。脚本会重试临时网络错误，并复用已校验的 BIN。
 
 ## 本地开发
 

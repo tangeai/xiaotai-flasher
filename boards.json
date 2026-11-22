@@ -7,20 +7,20 @@
       "releases": [
         {
           "version": "v0.3.0 · xiaotai-esp32",
-          "bin_url": "./firmware/b368c59e5c300b9b7f021baa1c66aa34c1a12b5e00d6e2529f1dabd0a2ef3159.bin",
+          "bin_url": "./firmware/xiaotai-szpi-s3-v0.3.0-full-16MB.bin",
           "sha256": "b368c59e5c300b9b7f021baa1c66aa34c1a12b5e00d6e2529f1dabd0a2ef3159",
           "status": "published",
           "recommended": true
         },
         {
-          "version": "v1.5.0 · xiaotai-esp32（体验版）",
-          "bin_url": "./firmware/23c9923b8a335e0140fc6de73c0f52a94e1405c92e40198f45b10cb7c7697fb3.bin",
+          "version": "v1.5.0 · xiaotai-esp32（测试版）",
+          "bin_url": "./firmware/xiaotai-esp32-s3-app-v1.5.0-full-16MB.bin",
           "sha256": "23c9923b8a335e0140fc6de73c0f52a94e1405c92e40198f45b10cb7c7697fb3",
           "status": "published"
         },
         {
-          "version": "v1.2.0-beta.1 · xiaotai（体验版）",
-          "bin_url": "./firmware/d786dab91cd134d7ef7ae6ccb2e98b36a66a1895b9aefc50d2a381110c280bd9.bin",
+          "version": "v1.2.0-beta.1 · xiaotai（测试版）",
+          "bin_url": "./firmware/v1.2.0-beta.1_lckfb-esp32s3_merged.bin",
           "sha256": "d786dab91cd134d7ef7ae6ccb2e98b36a66a1895b9aefc50d2a381110c280bd9",
           "status": "published"
         }
@@ -33,14 +33,14 @@
       "releases": [
         {
           "version": "v0.3.0 · xiaotai-esp32",
-          "bin_url": "./firmware/321df475536497612f529495364870ee75d737077fe74069fc68e39fd08fc48f.bin",
+          "bin_url": "./firmware/xiaotai-cores3-lite-v0.3.0-full-16MB.bin",
           "sha256": "321df475536497612f529495364870ee75d737077fe74069fc68e39fd08fc48f",
           "status": "published",
           "recommended": true
         },
         {
-          "version": "v1.5.1 · xiaotai-esp32（体验版）",
-          "bin_url": "./firmware/b978119b4bfe25f05da569fa72937f2f6aab03531e877fb7ca0cb824a2727a2f.bin",
+          "version": "v1.5.1 · xiaotai-esp32（测试版）",
+          "bin_url": "./firmware/xiaotai-m5stack-cores3-lite-app-v1.5.1-full-16MB.bin",
           "sha256": "b978119b4bfe25f05da569fa72937f2f6aab03531e877fb7ca0cb824a2727a2f",
           "status": "published"
         }
@@ -52,8 +52,8 @@
       "chip": "ESP32-S3",
       "releases": [
         {
-          "version": "v1.2.0-beta.1 · xiaotai（体验版）",
-          "bin_url": "./firmware/702e1166bab0f7a5ab85a6af144d9b158a87c859278b40fcb13df7c00c556c95.bin",
+          "version": "v1.2.0-beta.1 · xiaotai（测试版）",
+          "bin_url": "./firmware/v1.2.0-beta.1_m5stack-cores3-lite_ili9342c_merged.bin",
           "sha256": "702e1166bab0f7a5ab85a6af144d9b158a87c859278b40fcb13df7c00c556c95",
           "status": "published",
           "recommended": true
@@ -66,8 +66,8 @@
       "chip": "ESP32-P4",
       "releases": [
         {
-          "version": "v1.2.0-beta.1 · xiaotai（体验版）",
-          "bin_url": "./firmware/7447e5b875e254187fe0bf067a1e4b4a735781fd6121c77110875320fb713220.bin",
+          "version": "v1.2.0-beta.1 · xiaotai（测试版）",
+          "bin_url": "./firmware/v1.2.0-beta.1_waveshare-esp32p4-touch-lcd-43c-v10_merged.bin",
           "sha256": "7447e5b875e254187fe0bf067a1e4b4a735781fd6121c77110875320fb713220",
           "status": "published",
           "recommended": true
@@ -81,14 +81,14 @@
       "releases": [
         {
           "version": "v0.3.0 · xiaotai-esp32",
-          "bin_url": "./firmware/cde9353befeb59a37cbd45105e5d4cbe011f8748841bd8bebb7b92544395e3c3.bin",
+          "bin_url": "./firmware/xiaotai-waveshare-p4-rev3-v0.3.0-full-16MB.bin",
           "sha256": "cde9353befeb59a37cbd45105e5d4cbe011f8748841bd8bebb7b92544395e3c3",
           "status": "published",
           "recommended": true
         },
         {
-          "version": "v1.6.1 · xiaotai-esp32（体验版）",
-          "bin_url": "./firmware/fe432a8a4dec67866d4e52b4d8f68fe42a88ae943b5a6c7ca48e6a74a6c099e4.bin",
+          "version": "v1.6.1 · xiaotai-esp32（测试版）",
+          "bin_url": "./firmware/xiaotai-esp32-p4-app-v1.6.1-full-16MB.bin",
           "sha256": "fe432a8a4dec67866d4e52b4d8f68fe42a88ae943b5a6c7ca48e6a74a6c099e4",
           "status": "published"
         }
@@ -101,7 +101,7 @@
       "releases": [
         {
           "version": "v0.3.0 · xiaotai-esp32",
-          "bin_url": "./firmware/52505c513312ecc947fec83184b45e271469ee5fb35fccd2e9be8482c6c71d07.bin",
+          "bin_url": "./firmware/xiaotai-wt99p461-s1-1v1-v0.3.0-full-16MB.bin",
           "sha256": "52505c513312ecc947fec83184b45e271469ee5fb35fccd2e9be8482c6c71d07",
           "status": "published",
           "recommended": true
@@ -114,8 +114,8 @@
       "chip": "ESP32-C3",
       "releases": [
         {
-          "version": "xmini-c3-v3-app-v0.1.0 · xiaotai-esp32（体验版）",
-          "bin_url": "./firmware/398f95bbc9455678df4902fb8ade4a25330b2dfe0f8a41e598e1b69d737633f1.bin",
+          "version": "xmini-c3-v3-app-v0.1.0 · xiaotai-esp32（测试版）",
+          "bin_url": "./firmware/xiaotai-xmini-c3-v3-app-v0.1.0-full-16MB.bin",
           "sha256": "398f95bbc9455678df4902fb8ade4a25330b2dfe0f8a41e598e1b69d737633f1",
           "status": "published",
           "recommended": true
@@ -129,7 +129,7 @@
       "releases": [
         {
           "version": "mz28-ai-app-v1.0.0 · xiaotai-esp32",
-          "bin_url": "./firmware/5b867f598b5898e522fb1936f19434ea8e76d7aecf6434112e0b33032e919687.bin",
+          "bin_url": "./firmware/xiaotai-mz28-1.0.0-full-8MB.bin",
           "sha256": "5b867f598b5898e522fb1936f19434ea8e76d7aecf6434112e0b33032e919687",
           "status": "published",
           "recommended": true
@@ -142,15 +142,23 @@
       "chip": "BK7258",
       "releases": [
         {
+          "version": "v1.2.0-beta.1 · xiaotai（测试版）",
+          "bin_url": "./firmware/v1.2.0-beta.1_lckfb-bk7258_all-app.bin",
+          "sha256": "b98be7b726f8cd51bb5430366b49a4d4e80103f2bbc2248596f5f0c181980592",
+          "status": "published",
+          "embedded_version": "1.0.2+build.99"
+        },
+        {
           "version": "v1.1.0 · xiaotai",
-          "bin_url": "./firmware/f542472fdf2c7ad5352a2687168756830678923171c84be2c7a829861c599796.bin",
+          "bin_url": "./firmware/v1.1.0_lckfb-bk7258_all-app.bin",
           "sha256": "f542472fdf2c7ad5352a2687168756830678923171c84be2c7a829861c599796",
           "status": "published",
-          "recommended": true
+          "recommended": true,
+          "embedded_version": "1.0.2+build.86"
         },
         {
           "version": "v1.0.0 · xiaotai",
-          "bin_url": "./firmware/24a8ecc0a906efbeebb445197a04838c64de548e3264f846016144a14e87553d.bin",
+          "bin_url": "./firmware/v1.0.0_lckfb-bk7258_all-app.bin",
           "sha256": "24a8ecc0a906efbeebb445197a04838c64de548e3264f846016144a14e87553d",
           "status": "published"
         }
@@ -163,15 +171,23 @@
       "chip": "BK7258",
       "releases": [
         {
+          "version": "v1.2.0-beta.1 · xiaotai（测试版）",
+          "bin_url": "./firmware/v1.2.0-beta.1_mgkfb-bk7258_all-app.bin",
+          "sha256": "473d1ead810356bd1102dbcf65762296cfd6f2377ecd13854b543ddf9d2ba5fd",
+          "status": "published",
+          "embedded_version": "1.0.3+build.49"
+        },
+        {
           "version": "v1.1.0 · xiaotai",
-          "bin_url": "./firmware/a2d33eb5e302d5927cfb20800765e90a0ad4460143cbfb2ef1a825db3ad83278.bin",
+          "bin_url": "./firmware/v1.1.0_mgkfb-bk7258_all-app.bin",
           "sha256": "a2d33eb5e302d5927cfb20800765e90a0ad4460143cbfb2ef1a825db3ad83278",
           "status": "published",
-          "recommended": true
+          "recommended": true,
+          "embedded_version": "1.0.3+build.39"
         },
         {
           "version": "v1.0.0 · xiaotai",
-          "bin_url": "./firmware/2c7fb16c3715ce7a9eb44cbd8222e817096f286d9c4c5bc778502d5e23167428.bin",
+          "bin_url": "./firmware/v1.0.0_mgkfb-bk7258_all-app.bin",
           "sha256": "2c7fb16c3715ce7a9eb44cbd8222e817096f286d9c4c5bc778502d5e23167428",
           "status": "published"
         }

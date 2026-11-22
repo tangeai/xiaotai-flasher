@@ -15,7 +15,8 @@ test('the manual firmware catalog loads and uses the Nginx BIN paths', () => {
     for (const release of board.releases) {
       if (release.status !== 'published') continue;
       assert.match(release.sha256, /^[a-f0-9]{64}$/);
-      assert.equal(release.bin_url, `./firmware/${release.sha256}.bin`);
+      assert.match(release.bin_url, /^\.\/firmware\/[A-Za-z0-9][A-Za-z0-9._+-]{0,249}\.bin$/);
+      assert.notEqual(release.bin_url, `./firmware/${release.sha256}.bin`);
     }
   }
 });
@@ -53,4 +54,12 @@ test('cancels an in-progress firmware download when the device disconnects', asy
   await reading;
   abort.abort(error);
   await rejected;
+});
+
+test('displays the current prerelease label for older external catalogs', () => {
+  const release = { version: 'v1.5.0 · xiaotai-esp32（体验版）', status: 'published',
+    bin_url: './firmware/example.bin', sha256: 'a'.repeat(64) };
+  const board = { slug: 'sample', model: 'sample', chip: 'ESP32', releases: [release] };
+  const [loaded] = publishedBoards({ boards: [board] }, 'https://example.com/boards.json');
+  assert.equal(loaded.versions[0].version, 'v1.5.0 · xiaotai-esp32（测试版）');
 });

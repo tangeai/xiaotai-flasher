@@ -51,16 +51,19 @@ export function publishedBoards(data, catalogURL) {
     }
     const versionNames = new Set();
     const versions = board.releases.flatMap((release) => {
+      const version = typeof release?.version === 'string'
+        ? release.version.replaceAll('体验版', '测试版')
+        : '';
       if (
         typeof release?.version !== 'string' ||
         !release.version.trim() ||
         release.version !== release.version.trim() ||
-        versionNames.has(release.version) ||
+        versionNames.has(version) ||
         !releaseStates.has(release.status)
       ) {
         throw new Error(`${board.model} 的固件版本或发布状态有误。`);
       }
-      versionNames.add(release.version);
+      versionNames.add(version);
       if (release.status !== 'published') return [];
       const binURL = linkedURL(release.bin_url, catalogURL);
       if (
@@ -73,7 +76,7 @@ export function publishedBoards(data, catalogURL) {
           `${board.model} ${release.version} 的 BIN 链接或 SHA‑256 有误。`,
         );
       }
-      return [{ ...release, bin_url: binURL.href }];
+      return [{ ...release, version, bin_url: binURL.href }];
     });
     if (versions.filter((release) => release.recommended).length > 1) {
       throw new Error(`${board.model} 只能有一个推荐版本。`);

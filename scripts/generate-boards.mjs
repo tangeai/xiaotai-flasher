@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, mkdtemp, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { Readable, Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -161,7 +161,7 @@ function releaseEntry(repository, release, board, image) {
       release.tag_name +
       ' · ' +
       repository.split('/')[1] +
-      (release.prerelease ? '（体验版）' : ''),
+      (release.prerelease ? '（测试版）' : ''),
   };
 }
 
@@ -312,11 +312,15 @@ function assemble(entries) {
     ) {
       throw new Error(`板卡 ${entry.slug} 的芯片或固件版本有冲突`);
     }
-    const { sha256 } = entry.image;
-    images.set(sha256, entry.image);
+    const { filename, sha256 } = entry.image;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._+-]{0,249}\.bin$/.test(filename))
+      throw new Error(`固件文件名不能用于下载路径：${filename}`);
+    if (images.has(filename) && images.get(filename).sha256 !== sha256)
+      throw new Error(`不同内容使用了相同的固件文件名：${filename}`);
+    images.set(filename, entry.image);
     board.releases.push({
       version: entry.version,
-      bin_url: `./firmware/${sha256}.bin`,
+      bin_url: `./firmware/${filename}`,
       sha256,
       status: 'published',
       prerelease: entry.prerelease,
@@ -425,7 +429,13 @@ async function transferAsset(asset, label, temporary) {
 async function mirrorImage(image, destination, temporary) {
   if (await validCachedImage(destination, image)) return;
   await transferAsset(image, image.filename, temporary);
-  await rename(temporary, destination);
+  try {
+    await link(temporary, destination);
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    if (!(await validCachedImage(destination, image)))
+      throw new Error(`已发布的同名文件内容不同：${image.filename}`);
+  }
 }
 
 async function generate(output, includePrerelease) {
@@ -447,7 +457,7 @@ async function generate(output, includePrerelease) {
   try {
     for (let start = 0; start < images.length; start += 3) {
       const batch = images.slice(start, start + 3).map((image) => {
-        const name = image.sha256 + '.bin';
+        const name = image.filename;
         return mirrorImage(image, join(firmware, name), join(temporary, name));
       });
       const results = await Promise.allSettled(batch);
