@@ -98,12 +98,29 @@ node scripts/generate-boards.mjs --output-dir ./releases/board-catalog
 在目标服务器执行以下命令。`sudo` 环境需能找到 Node.js 和 npm。使用自有固件下载站点时，将 `BOARDS_URL` 换成其实际 HTTPS 链接，并在下载端为 JSON 和 BIN 配置 CORS。
 
 ```bash
-curl -fsSLo /tmp/xiaotai-flasher-install.sh \
-  https://raw.githubusercontent.com/tangeai/xiaotai-flasher/main/scripts/install.sh
-bash -n /tmp/xiaotai-flasher-install.sh
-sudo env BOARDS_URL=/web-flasher/board-catalog/boards.json \
-  bash /tmp/xiaotai-flasher-install.sh
+installer=$(mktemp /tmp/xiaotai-flasher-install.XXXXXX)
+curl -fsSLo "$installer" \
+  https://raw.githubusercontent.com/tangeai/xiaotai-flasher/main/scripts/install.sh &&
+bash -n "$installer" &&
+sudo env BOARDS_URL=/web-flasher/board-catalog/boards.json bash "$installer" &&
 sudo /opt/xiaotai-flasher/deploy-prod.sh catalog
+```
+
+如果服务器访问 `raw.githubusercontent.com` 时 TLS 连接被重置，可改从 `github.com` 克隆后执行安装脚本。
+
+```bash
+bootstrap=$(mktemp -d /tmp/xiaotai-flasher-bootstrap.XXXXXX)
+git clone --depth=1 https://github.com/tangeai/xiaotai-flasher.git "$bootstrap" &&
+sudo env BOARDS_URL=/web-flasher/board-catalog/boards.json \
+  bash "$bootstrap/scripts/install.sh" &&
+sudo /opt/xiaotai-flasher/deploy-prod.sh catalog
+```
+
+如果目标服务器也无法下载 GitHub 仓库或固件附件，在可联网的机器生成静态包和固件目录，再传到目标服务器。静态包内容放入 `/opt/xiaotai-flasher/www/web-flasher/`，固件目录内容放入 `/opt/xiaotai-flasher/board-catalog/`。已有脚本管理的版本时，用发布脚本切换版本。
+
+```bash
+./scripts/release.sh --boards-url /web-flasher/board-catalog/boards.json
+node scripts/generate-boards.mjs --output-dir ./releases/board-catalog
 ```
 
 默认部署根目录是 `/opt/xiaotai-flasher`。可用 `DEPLOY_ROOT`、`REPO_URL`、`REPO_BRANCH` 指定其他安装目录、仓库或分支。默认从 `main` 安装，后续更新跟随安装时选择的分支。

@@ -206,18 +206,17 @@ async function archiveEntries(release) {
   ).json();
   if (tree.truncated)
     throw new Error(`${release.tag_name} 的仓库目录列表不完整`);
-  const paths = tree.tree.filter(({ path }) =>
-    /^boards\/[^/]+\/[^/]+\/board\.json$/.test(path),
+  const paths = tree.tree.filter(({ type, path }) =>
+    type === 'blob' && /^boards\/[^/]+\/[^/]+\/board\.json$/.test(path),
   );
   const boards = await Promise.all(
-    paths.map(
-      async ({ path }) =>
-        await (
-          await request(
-            `https://raw.githubusercontent.com/${archiveRepo}/${tag}/${path}`,
-          )
-        ).json(),
-    ),
+    paths.map(async ({ path, sha }) => {
+      const blob = await (await api(`${archiveRepo}/git/blobs/${sha}`)).json();
+      if (blob.encoding !== 'base64' || typeof blob.content !== 'string') {
+        throw new Error(`${release.tag_name} 的板卡定义无法读取：${path}`);
+      }
+      return JSON.parse(Buffer.from(blob.content, 'base64').toString('utf8'));
+    }),
   );
   const entries = [];
   for (const board of boards) {
