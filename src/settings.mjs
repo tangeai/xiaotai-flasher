@@ -59,7 +59,7 @@ export const settingFields = [
         size + ' MB',
       ]),
     ],
-    '修改启动镜像头声明的 Flash 容量。自动检测会将读取到的容量用于这个设置。',
+    '修改启动镜像头声明的 Flash 容量。自动检测会使用设备报告的容量，手动设置需与检测结果一致。',
   ],
   [
     'before-reset',

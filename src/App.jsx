@@ -596,7 +596,8 @@ export function App() {
           slug: board?.slug ?? '',
           version: recommendedVersion(board),
         }));
-        if (requestedBoard && !userSelected.current) setOrigin('official');
+        if (board && (!requested || requestedBoard) && !userSelected.current)
+          setOrigin('official');
       })
       .catch((error) => {
         if (abort.signal.aborted) return;

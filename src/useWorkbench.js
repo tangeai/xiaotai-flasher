@@ -21,7 +21,7 @@ export function useWorkbench() {
   const [view, setView] = useState(initialState);
   const flash = useRef(null);
   const monitor = useRef(null);
-  const lastPort = useRef(null);
+  const lastFlashedPort = useRef(null);
   const busy = useRef(false);
   const update = (patch) => setView((old) => ({ ...old, ...patch }));
   const flashStatus = (deviceMessage, deviceError = false) =>
@@ -110,7 +110,6 @@ export function useWorkbench() {
       throw error;
     }
     const active = { port, reader, stopping: false };
-    lastPort.current = port;
     monitor.current = active;
     update({ monitoring: true, monitorMessage: '' });
     active.done = readMonitor(active);
@@ -129,7 +128,6 @@ export function useWorkbench() {
           appendLog('flashLog', line),
         );
         flash.current = { port, session };
-        lastPort.current = port;
         update({ device: session });
         flashStatus(
           `已连接 · ${session.chip} · Flash ${session.capacityLabel}`,
@@ -172,12 +170,19 @@ export function useWorkbench() {
 
   function showDeviceLog(rate) {
     setTab('log');
-    if (!monitor.current && lastPort.current) {
-      return run(
-        () => startMonitor(lastPort.current, rate),
-        () => monitorStatus('请选择设备当前的日志串口。'),
-      );
+    const port = lastFlashedPort.current;
+    if (!port || monitor.current?.port === port) return;
+    if (flash.current?.port === port) {
+      monitorStatus('请先断开烧录串口，再连接到设备日志。');
+      return;
     }
+    return run(
+      async () => {
+        await releaseMonitor();
+        await startMonitor(port, rate);
+      },
+      () => monitorStatus('请选择设备当前的日志串口。'),
+    );
   }
 
   function write(firmware, options) {
@@ -232,6 +237,7 @@ export function useWorkbench() {
         }
 
         progress('烧录完成，校验通过', 100, 'success');
+        lastFlashedPort.current = port;
         update({ complete });
         let resetFailed = false;
         try {

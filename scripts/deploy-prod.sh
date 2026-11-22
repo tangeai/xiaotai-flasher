@@ -6,6 +6,7 @@ usage() {
 用法: deploy-prod.sh <命令>
 
   update        快进拉取、构建并发布
+  catalog       从 GitHub Releases 更新板卡目录，可加 --include-prerelease
   status        查看当前发布、源码提交、板卡目录和可用版本
   rollback 版本  切换到 status 列出的指定版本
   help          显示此帮助
@@ -23,6 +24,7 @@ command="${1:-help}"
 case "$command" in
   help|-h|--help) usage; exit ;;
   update|status) [[ $# -eq 1 ]] || fail "$command 不接受位置参数。" ;;
+  catalog) [[ $# -eq 1 || ( $# -eq 2 && "$2" = --include-prerelease ) ]] || fail 'catalog 仅接受 --include-prerelease。' ;;
   rollback) [[ $# -eq 2 ]] || fail '请指定 status 显示的版本目录名。' ;;
   *) usage >&2; exit 2 ;;
 esac
@@ -51,6 +53,12 @@ flock -n 9 || fail '另一个安装或发布任务正在运行。'
 if [[ "$command" == rollback ]]; then
   node "$publisher" rollback "$site" "$2"
   exit
+fi
+
+if [[ "$command" == catalog ]]; then
+  shift
+  umask 022
+  exec node "$repo/scripts/generate-boards.mjs" --output-dir "$root/board-catalog" "$@"
 fi
 
 [[ -z "$(git -C "$repo" status --porcelain)" ]] || fail '生产源码目录有未提交修改，请先处理。'

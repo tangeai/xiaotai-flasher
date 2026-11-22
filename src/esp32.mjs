@@ -1,6 +1,10 @@
 import SparkMD5 from 'spark-md5';
 import { ESPLoader, Transport } from './vendor/esptool-0.7.0.mjs';
-import { validateBootImage, validateLayout } from './flash-image.mjs';
+import {
+  updateBootSettings,
+  validateBootImage,
+  validateLayout,
+} from './flash-image.mjs';
 
 export async function connectEsp32(port, settings, print) {
   const transport = new Transport(port);
@@ -38,15 +42,52 @@ export async function connectEsp32(port, settings, print) {
         validateLayout(images, capacity);
         if (options.eraseAll && !loader.IS_STUB)
           throw new Error('当前设备连接方式无法执行全片擦除。');
+        const overrides = [
+          options.flashMode,
+          options.flashFreq,
+          options.flashSize,
+        ].some((value) => value !== 'keep');
+        if (
+          options.flashSize !== 'keep' &&
+          options.flashSize !== 'detect' &&
+          loader.flashSizeBytes(options.flashSize) !== capacity
+        ) {
+          throw new Error('所选 Flash 容量与设备检测结果不一致。');
+        }
+        let bootFound = false;
+        const fileArray = [];
         for (const image of images) {
           const bootOffset = chip.BOOTLOADER_FLASH_OFFSET - image.address;
+          let data = image.data;
           if (
             options.complete ||
             (bootOffset >= 0 && bootOffset < image.data.byteLength)
           ) {
-            validateBootImage(image.data, bootOffset, chip);
+            const boot = await validateBootImage(data, bootOffset, chip);
+            const bootEnd = boot.digestOffset + (boot.hasDigest ? 32 : 0);
+            if (
+              options.complete &&
+              !data.subarray(bootEnd).some((byte) => byte !== 0xff)
+            ) {
+              throw new Error(
+                '这个 BIN 只有启动镜像。请选择包含应用的完整 BIN。',
+              );
+            }
+            bootFound = true;
+            if (overrides)
+              data = await updateBootSettings(
+                data,
+                bootOffset,
+                boot,
+                chip,
+                options,
+                detected,
+              );
           }
+          fileArray.push({ ...image, data });
         }
+        if (overrides && !bootFound)
+          throw new Error('修改 Flash 参数时，请同时提供启动镜像。');
         const totalSize = images.reduce(
           (total, image) => total + image.size,
           0,
@@ -58,7 +99,10 @@ export async function connectEsp32(port, settings, print) {
         }, 0);
         await loader.writeFlash({
           ...options,
-          fileArray: images,
+          flashMode: 'keep',
+          flashFreq: 'keep',
+          flashSize: 'keep',
+          fileArray,
           calculateMD5Hash: (data) =>
             SparkMD5.ArrayBuffer.hash(
               data.buffer.slice(

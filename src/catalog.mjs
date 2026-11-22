@@ -3,8 +3,12 @@ const boardSlug = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const releaseStates = new Set(['draft', 'published', 'offline']);
 
 function linkedURL(raw, base) {
-  const url =
-    typeof raw === 'string' && raw.trim() ? URL.parse(raw, base) : null;
+  let url;
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      url = new URL(raw, base);
+    } catch {}
+  }
   if (
     !url ||
     url.username ||
