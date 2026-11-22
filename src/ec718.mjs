@@ -147,7 +147,6 @@ export function createEc718Protocol(reader, writer) {
     await writer.write(frame);
     const deadline = performance.now() + (id === 0x44 ? 10000 : 2200);
     const header = await input.read(6, deadline);
-    const tail = await input.read(header[5] + (rom ? 0 : 4), deadline);
     if (
       header[0] !== id ||
       header[1] !== index ||
@@ -157,6 +156,7 @@ export function createEc718Protocol(reader, writer) {
       throw new Error(
         `EC718 命令 0x${id.toString(16)} 返回无效响应（状态 ${header[4]}）。`,
       );
+    const tail = await input.read(header[5] + (rom ? 0 : 4), deadline);
     return tail.subarray(0, header[5]);
   }
 

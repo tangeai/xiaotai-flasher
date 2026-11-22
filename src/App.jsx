@@ -937,7 +937,7 @@ export function App() {
           <span className="brand-name">小钛</span>
         </a>
         <div className="app-title">
-          <h1>ESP32 / BK7258 / EC718 在线烧录与串口日志</h1>
+          <h1>固件烧录与串口日志工作台</h1>
           <p className="muted">
             适用芯片：ESP32、S2、S3、C2、C3、C5、C6、H2、P4、BK7258、EC718PM（Air780EPM）
           </p>

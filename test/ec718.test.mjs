@@ -3,9 +3,13 @@ import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { crc32 } from 'node:zlib';
 import { publishedBoards } from '../src/catalog.mjs';
-import { parseEc718Package } from '../src/ec718-image.mjs';
+import {
+  parseEc718Package,
+  validateEc718Agent,
+  ec718AgentSize,
+} from '../src/ec718-image.mjs';
 import { createEc718LogDecoder } from '../src/ec718-log.mjs';
-import { createEc718Protocol } from '../src/ec718.mjs';
+import { connectEc718, createEc718Protocol } from '../src/ec718.mjs';
 import { prepareFirmware } from '../src/firmware.mjs';
 
 const head = 0x54494d48;
@@ -136,6 +140,7 @@ function simulatedProtocol(steps) {
   const pending = [...steps];
   const incoming = [];
   let mode;
+  let disconnected = false;
   const writer = {
     async write(frame) {
       const step = pending.shift();
@@ -161,17 +166,30 @@ function simulatedProtocol(steps) {
         }
         const data = step.reply ?? Buffer.alloc(0);
         response = Buffer.concat([
-          Buffer.from([step.id, bytes[1], bytes[2], bytes[3], 0, data.length]),
+          Buffer.from([
+            step.id,
+            bytes[1],
+            bytes[2],
+            bytes[3],
+            step.status ?? 0,
+            data.length,
+          ]),
           data,
           Buffer.alloc(mode === 0 ? 0 : 4),
         ]);
       }
-      incoming.push(response.subarray(0, 3), response.subarray(3));
+      if (step.disconnect) {
+        disconnected = true;
+        incoming.push(response.subarray(0, step.disconnect));
+      } else {
+        incoming.push(response.subarray(0, 3), response.subarray(3));
+      }
     },
   };
   const reader = {
     async read() {
       const value = incoming.shift();
+      if (!value && disconnected) return { done: true };
       assert.ok(value, 'mock has a response for the current step');
       return { done: false, value };
     },
@@ -259,4 +277,149 @@ test('decodes split and escaped EC718 SOC log frames with string and integer arg
   for (const byte of escaped) logs += decoder.decode([byte]);
   assert.equal(logs, '[1.357s] I/main x~}yz n=-7\n');
   assert.equal(decoder.decode([0x7e, 0, 0, 0x7e]), '');
+});
+
+test('rejects a corrupted AgentBoot even when the file size is correct', async () => {
+  await assert.rejects(
+    validateEc718Agent(new Uint8Array(ec718AgentSize)),
+    /AgentBoot 校验失败/,
+  );
+});
+
+test('rejects a running-mode USB port before opening the download connection', async () => {
+  await assert.rejects(
+    connectEc718({
+      getInfo: () => ({ usbVendorId: 0x19d1, usbProductId: 1 }),
+      open: () => assert.fail('must not open a runtime USB port for flashing'),
+    }),
+    /USB BOOT 下载串口/,
+  );
+});
+
+test('stops before sending payload when the device refuses to select a partition', async () => {
+  const device = simulatedProtocol([
+    sync(0x2b02d3cd),
+    cmd(0x42, le32(0), { status: 3, disconnect: 6 }),
+  ]);
+  await assert.rejects(
+    device.burn({ identifier: ap }, () => assert.fail('no payload was sent')),
+    /命令 0x42.*状态 3/,
+  );
+  device.assertFinished();
+});
+
+test('stops when the device returns a different image type or a zero transfer length', async () => {
+  const wrongImage = simulatedProtocol([
+    sync(0x2b02d300),
+    cmd(0x20),
+    cmd(0x21, le32(ap)),
+  ]);
+  await wrongImage.sync('rom');
+  await assert.rejects(wrongImage.loadAgent(Buffer.of(7)), /镜像类型/);
+  wrongImage.assertFinished();
+
+  const zeroLength = simulatedProtocol([
+    sync(0x2b02d300),
+    ...select(head),
+    cmd(0x31, le32(0), { data: le32(272) }),
+  ]);
+  await zeroLength.sync('rom');
+  await assert.rejects(zeroLength.loadAgent(Buffer.of(7)), /无效的传输长度/);
+  zeroLength.assertFinished();
+});
+
+test('fails on disconnect in the middle of a response', async () => {
+  const device = simulatedProtocol([
+    sync(0x2b02d3cd),
+    cmd(0x42, undefined, { disconnect: 3 }),
+  ]);
+  await assert.rejects(
+    device.burn({ identifier: ap }, () => assert.fail('no payload was sent')),
+    /下载串口已断开/,
+  );
+  device.assertFinished();
+});
+
+test('rejects a nonzero partition verification result and an invalid reset reply', async () => {
+  const data = Buffer.of(7);
+  const digest = createHash('sha256').update(data).digest();
+  const device = simulatedProtocol([
+    sync(0x2b02d3cd),
+    cmd(0x42, undefined, { data: le32(ap) }),
+    sync(0x2b02d3aa),
+    sync(0x2b02d3aa),
+    ...select(head),
+    ...transfer(272),
+    sync(0x2b02d3aa),
+    ...select(ap),
+    ...transfer(1),
+    cmd(0x44, le32(12)),
+  ]);
+  await assert.rejects(
+    device.burn(
+      { identifier: ap, address: 0x82000, type: 'AP', data, digest },
+      () => {},
+    ),
+    /AP 分区写入校验失败/,
+  );
+  device.assertFinished();
+
+  const invalidReset = simulatedProtocol([
+    sync(0x2b02d3cd),
+    cmd(0xaa, Buffer.from('wrong')),
+  ]);
+  await assert.rejects(invalidReset.reset(), /未收到 EC718 复位确认/);
+  invalidReset.assertFinished();
+});
+
+test('retries a late split ROM echo without creating a second serial read', async () => {
+  let writes = 0;
+  let reads = 0;
+  let pendingResponse;
+  const protocol = createEc718Protocol(
+    {
+      read() {
+        reads += 1;
+        if (reads === 2)
+          return Promise.resolve({ value: Buffer.from([0x2b, 0]) });
+        assert.equal(reads, 1);
+        return new Promise((resolve) => {
+          pendingResponse = resolve;
+        });
+      },
+    },
+    {
+      async write() {
+        writes += 1;
+        if (writes === 2)
+          pendingResponse({ value: Buffer.from([0xff, 0, 0xd3, 2]) });
+      },
+    },
+  );
+  await protocol.sync('rom');
+  assert.equal(writes, 2);
+  assert.equal(reads, 2);
+});
+
+test('SOC log decoder recovers after an oversize frame and a dangling escape', () => {
+  const decoder = createEc718LogDecoder();
+  const validLine = Buffer.concat([
+    le32(0),
+    Buffer.alloc(8),
+    Buffer.from('I/main 日志恢复\0'),
+  ]);
+  assert.equal(
+    decoder.decode(
+      Buffer.concat([
+        Buffer.of(0x7e),
+        Buffer.alloc(8193, 1),
+        Buffer.of(0x7e),
+        validLine,
+        Buffer.of(0x7d, 0x7e),
+        validLine,
+        Buffer.of(0x7e),
+      ]),
+    ),
+    '[0.000s] I/main 日志恢复\n',
+  );
 });
