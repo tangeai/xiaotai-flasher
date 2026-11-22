@@ -25,7 +25,7 @@ export function prepareFirmware(
       kind: 'official',
       release,
       chip: board.chip,
-      label: `${board.model} · ${release.version} @ 0x0`,
+      boardModel: board.model,
     };
   }
   const kind = segmented ? 'segments' : 'complete';
@@ -56,8 +56,5 @@ export function prepareFirmware(
     kind,
     entries,
     chip: expectedChip,
-    label: entries
-      .map(({ name, address }) => `${name} @ 0x${address.toString(16)}`)
-      .join('、'),
   };
 }

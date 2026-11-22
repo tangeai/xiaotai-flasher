@@ -473,6 +473,69 @@ function LogConsole({ workbench, rate, setRate }) {
   );
 }
 
+function FlashSummary({ firmware, chip }) {
+  const official = firmware.kind === 'official';
+  const segmented = firmware.kind === 'segments';
+  const address = official ? 0 : firmware.entries[0].address;
+
+  return (
+    <dl className="flash-summary">
+      <div>
+        <dt>目标芯片</dt>
+        <dd>{chip ?? '设备已断开'}</dd>
+      </div>
+      {official && (
+        <>
+          <div>
+            <dt>开发板</dt>
+            <dd>{firmware.boardModel}</dd>
+          </div>
+          <div>
+            <dt>固件版本</dt>
+            <dd>{firmware.release.version}</dd>
+          </div>
+        </>
+      )}
+      <div>
+        <dt>烧录方式</dt>
+        <dd>{segmented ? '分段烧录' : '完整镜像'}</dd>
+      </div>
+      {segmented ? (
+        <div>
+          <dt>文件及地址</dt>
+          <dd>
+            <ul className="flash-summary-files">
+              {firmware.entries.map(({ name, address }) => (
+                <li key={address}>
+                  <span>{name}</span>
+                  <code>0x{address.toString(16)}</code>
+                </li>
+              ))}
+            </ul>
+            <small>各地址是相对 Flash 起始位置的字节偏移。</small>
+          </dd>
+        </div>
+      ) : (
+        <>
+          {!official && (
+            <div>
+              <dt>BIN 文件</dt>
+              <dd>{firmware.entries[0].name}</dd>
+            </div>
+          )}
+          <div>
+            <dt>烧录起始地址</dt>
+            <dd>
+              <code>0x{address.toString(16)}</code>
+              <small>从 Flash 起始位置写入，偏移 0 字节。</small>
+            </dd>
+          </div>
+        </>
+      )}
+    </dl>
+  );
+}
+
 function HelpDialog({ dialogRef, onClose }) {
   return (
     <dialog
@@ -871,9 +934,7 @@ export function App() {
         onClose={beginWrite}
       >
         <h2 id="confirm-title">确认烧录</h2>
-        <p>
-          {device?.chip} · {pending?.label}
-        </p>
+        {pending && <FlashSummary firmware={pending} chip={device?.chip} />}
         <p className="muted actions">
           {settings.eraseAll
             ? '将擦除整片 Flash。请确认现有设备数据可以清除。'
@@ -885,7 +946,7 @@ export function App() {
           <button className="btn" value="cancel">
             返回
           </button>
-          <button className="btn primary" value="flash">
+          <button className="btn primary" value="flash" disabled={!device}>
             确认写入
           </button>
         </form>

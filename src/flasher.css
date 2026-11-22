@@ -396,6 +396,43 @@ dialog p {
 .dialog-actions {
   justify-content: end;
 }
+.flash-summary {
+  margin: 10px 0;
+  border-block: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+.flash-summary > div {
+  display: grid;
+  grid-template-columns: 6em minmax(0, 1fr);
+  gap: 8px;
+  padding: 6px 0;
+}
+.flash-summary > div + div {
+  border-top: 1px solid var(--line);
+}
+.flash-summary dt {
+  color: var(--muted);
+}
+.flash-summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.flash-summary code {
+  white-space: nowrap;
+}
+.flash-summary-files {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.flash-summary-files li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
+}
 .toast {
   position: fixed;
   inset: 60px 12px auto auto;
