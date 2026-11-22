@@ -1,0 +1,300 @@
+import { useEffect, useRef, useState } from 'react';
+import { downloadFirmware } from './catalog.mjs';
+
+const serial = globalThis.isSecureContext ? navigator.serial : undefined;
+const logLimit = 240000;
+const initialState = {
+  busy: false,
+  device: null,
+  deviceMessage: '尚未连接烧录串口',
+  deviceError: false,
+  monitoring: false,
+  monitorMessage: '',
+  bootLog: '',
+  flashLog: '',
+  tab: 'log',
+  progress: null,
+  complete: false,
+};
+
+export function useWorkbench() {
+  const [view, setView] = useState(initialState);
+  const flash = useRef(null);
+  const monitor = useRef(null);
+  const lastPort = useRef(null);
+  const busy = useRef(false);
+  const update = (patch) => setView((old) => ({ ...old, ...patch }));
+  const flashStatus = (deviceMessage, deviceError = false) =>
+    update({ deviceMessage, deviceError });
+  const monitorStatus = (monitorMessage) => update({ monitorMessage });
+  const setTab = (tab) => update({ tab });
+  const appendLog = (key, text) => {
+    if (text)
+      setView((old) => ({ ...old, [key]: (old[key] + text).slice(-logLimit) }));
+  };
+  const progress = (message, percent, outcome = 'writing') => {
+    update({ progress: { message, percent, outcome } });
+  };
+
+  async function run(task, onError) {
+    if (busy.current || !serial) return;
+    busy.current = true;
+    update({ busy: true });
+    try {
+      await task();
+    } catch (error) {
+      onError(
+        error.name === 'NotFoundError' ? '已取消选择串口。' : error.message,
+        error,
+      );
+    } finally {
+      busy.current = false;
+      update({ busy: false });
+    }
+  }
+
+  async function releaseFlash() {
+    const active = flash.current;
+    flash.current = null;
+    update({ device: null });
+    if (active) await active.session.close();
+  }
+
+  async function releaseMonitor() {
+    const active = monitor.current;
+    if (!active) return;
+    active.stopping = true;
+    await active.reader.cancel().catch(() => {});
+    await active.done;
+  }
+
+  async function readMonitor(active) {
+    const decoder = new TextDecoder();
+    let message = '';
+    try {
+      while (!active.stopping) {
+        const { done, value } = await active.reader.read();
+        if (done) break;
+        appendLog('bootLog', decoder.decode(value, { stream: true }));
+      }
+      appendLog('bootLog', decoder.decode());
+    } catch (error) {
+      if (!active.stopping) message = '串口读取中断。' + error.message;
+    } finally {
+      active.reader.releaseLock();
+      if (active.port.readable || active.port.writable) {
+        try {
+          await active.port.close();
+        } catch (error) {
+          message = '无法释放日志串口。' + error.message;
+        }
+      }
+      if (monitor.current === active) {
+        monitor.current = null;
+        update({
+          monitoring: false,
+          monitorMessage:
+            message || (active.stopping ? '' : '串口已断开。请重新连接。'),
+        });
+      }
+    }
+  }
+
+  async function startMonitor(port, rate) {
+    await port.open({ baudRate: Number(rate) });
+    let reader;
+    try {
+      reader = port.readable.getReader();
+    } catch (error) {
+      await port.close().catch(() => {});
+      throw error;
+    }
+    const active = { port, reader, stopping: false };
+    lastPort.current = port;
+    monitor.current = active;
+    update({ monitoring: true, monitorMessage: '' });
+    active.done = readMonitor(active);
+  }
+
+  function connect(options) {
+    return run(
+      async () => {
+        // Keep the serial chooser inside the initiating click gesture.
+        const port = await serial.requestPort();
+        await releaseMonitor();
+        update({ flashLog: '', progress: null, complete: false });
+        flashStatus('正在连接并识别 ESP32…');
+        const { connectEsp32 } = await import('./esp32.mjs');
+        const session = await connectEsp32(port, options, (line) =>
+          appendLog('flashLog', line),
+        );
+        flash.current = { port, session };
+        lastPort.current = port;
+        update({ device: session });
+        flashStatus(
+          `已连接 · ${session.chip} · Flash ${session.capacityLabel}`,
+        );
+      },
+      (message, error) => {
+        flashStatus(message, error.name !== 'NotFoundError');
+        if (error.name !== 'NotFoundError') {
+          appendLog('flashLog', message + '\n');
+          setTab('flash');
+        }
+      },
+    );
+  }
+
+  function disconnect() {
+    return run(
+      async () => {
+        await releaseFlash();
+        flashStatus('已断开烧录串口。');
+      },
+      (message) => flashStatus(message, true),
+    );
+  }
+
+  function toggleMonitor(rate) {
+    return run(async () => {
+      if (monitor.current) {
+        await releaseMonitor();
+        return;
+      }
+      const port = await serial.requestPort();
+      if (flash.current?.port === port) {
+        await releaseFlash();
+        flashStatus('已释放烧录串口。若设备停在下载模式，请手动复位。');
+      }
+      await startMonitor(port, rate);
+    }, monitorStatus);
+  }
+
+  function showDeviceLog(rate) {
+    setTab('log');
+    if (!monitor.current && lastPort.current) {
+      return run(
+        () => startMonitor(lastPort.current, rate),
+        () => monitorStatus('请选择设备当前的日志串口。'),
+      );
+    }
+  }
+
+  function write(firmware, options) {
+    if (!flash.current) {
+      flashStatus('烧录串口已断开，请重新连接。', true);
+      return;
+    }
+    return run(
+      async () => {
+        const active = flash.current;
+        const { port, session } = active;
+        const complete = firmware.kind !== 'segments';
+        update({ tab: 'flash', complete: false });
+        progress(
+          firmware.kind === 'official' ? '下载并核对固件' : '准备固件',
+          0,
+        );
+        let written = 0;
+        try {
+          await releaseMonitor();
+          const images =
+            firmware.kind === 'official'
+              ? [await downloadFirmware(firmware.release, session.capacity)]
+              : await Promise.all(
+                  firmware.entries.map(async ({ file, ...entry }) => ({
+                    ...entry,
+                    data: new Uint8Array(await file.arrayBuffer()),
+                  })),
+                );
+          if (flash.current !== active)
+            throw new Error('设备已断开，请重新连接。');
+          await session.write(
+            images,
+            { ...options.flash, complete },
+            (fraction) => {
+              written = Math.min(
+                99,
+                Math.max(written, Math.round(99 * fraction)),
+              );
+              progress(
+                fraction >= 1 ? '正在校验写入内容' : '正在写入固件',
+                written,
+              );
+            },
+          );
+        } catch (error) {
+          progress('烧录失败', written, 'failed');
+          setTab('flash');
+          appendLog('flashLog', '\n' + error.message + '\n');
+          await releaseFlash().catch(() => {});
+          throw error;
+        }
+
+        progress('烧录完成，校验通过', 100, 'success');
+        update({ complete });
+        let resetFailed = false;
+        try {
+          if (options.restart) await session.reset();
+        } catch (error) {
+          resetFailed = true;
+          appendLog('flashLog', '自动复位失败：' + error.message + '\n');
+        } finally {
+          try {
+            await releaseFlash();
+          } catch (error) {
+            resetFailed = true;
+            appendLog('flashLog', '释放串口失败：' + error.message + '\n');
+          }
+        }
+        flashStatus(
+          !options.restart || resetFailed
+            ? '写入并校验完成。请按板上的复位键启动固件。'
+            : '写入并校验完成。设备已复位。',
+        );
+        if (options.restart && options.autoLog && !resetFailed) {
+          setTab('log');
+          try {
+            await startMonitor(port, options.logRate);
+          } catch {
+            monitorStatus('设备已复位。请选择设备当前的日志串口。');
+          }
+        }
+      },
+      (message) => flashStatus(message, true),
+    );
+  }
+
+  useEffect(() => {
+    const detached = (event) => {
+      if (
+        flash.current &&
+        (event.port === flash.current.port ||
+          event.target === flash.current.port)
+      ) {
+        const active = flash.current;
+        flash.current = null;
+        active.session.close().catch(() => {});
+        update({
+          device: null,
+          deviceMessage: '设备串口已断开，请重新连接。',
+          deviceError: true,
+        });
+      }
+    };
+    serial?.addEventListener('disconnect', detached);
+    return () => serial?.removeEventListener('disconnect', detached);
+  }, []);
+
+  return {
+    ...view,
+    serialAvailable: Boolean(serial),
+    connect,
+    disconnect,
+    write,
+    toggleMonitor,
+    setTab,
+    showDeviceLog,
+    clearLog: () => update({ bootLog: '' }),
+  };
+}
