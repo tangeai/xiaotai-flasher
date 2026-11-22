@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import brandMark from './assets/xiaotai-brand-mark.png';
-import { loadBoards } from './catalog.mjs';
+import { canonicalBoardSlug, loadBoards } from './catalog.mjs';
 import { prepareFirmware } from './firmware.mjs';
 import { bkSettingFields, settingFields } from './settings.mjs';
 import { useWorkbench } from './useWorkbench.js';
@@ -688,7 +688,8 @@ export function App() {
     loadBoards(configURL, abort.signal)
       .then((boards) => {
         if (abort.signal.aborted) return;
-        const requestedBoard = boards.find((board) => board.slug === requested);
+        const requestedBoard = boards.find((board) => board.slug === requested) ??
+          boards.find((board) => board.slug === canonicalBoardSlug(requested));
         const board = requestedBoard ?? boards[0];
         setCatalog({
           boards,

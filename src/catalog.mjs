@@ -4,6 +4,10 @@ const versionDigest = /^[a-f0-9]{64}$/i;
 const boardSlug = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const releaseStates = new Set(['draft', 'published', 'offline']);
 
+export function canonicalBoardSlug(slug) {
+  return slug === 'm5stack-cores3-lite-ili9342c' ? 'm5stack-cores3-lite' : slug;
+}
+
 function linkedURL(raw, base) {
   let url;
   if (typeof raw === 'string' && raw.trim()) {

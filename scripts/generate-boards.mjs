@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises';
 import { setTimeout as wait } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
 
+import { canonicalBoardSlug } from '../src/catalog.mjs';
 import { chips } from '../src/chips.mjs';
 
 const apiRoot = 'https://api.github.com/repos/';
@@ -272,13 +273,14 @@ async function archiveEntries(release, blobCache) {
       const imageType = bk ? 'all-app' : 'merged';
       const filename = `${release.tag_name}_${board.id}${suffix}_${imageType}.bin`;
       if (!release.assets.some((asset) => asset.name === filename)) continue;
+      const slug = canonicalBoardSlug(variant.default ? board.id : `${board.id}-${variant.name}`);
       entries.push(
         releaseEntry(
           archiveRepo,
           release,
           {
-            slug: variant.default ? board.id : `${board.id}-${variant.name}`,
-            model: suffix ? `${board.model}（${variant.name}）` : board.model,
+            slug,
+            model: suffix && slug !== board.id ? `${board.model}（${variant.name}）` : board.model,
             chip,
             flashBytes: bk ? board.resources?.flash_bytes : undefined,
           },

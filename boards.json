@@ -43,20 +43,12 @@
           "bin_url": "./firmware/xiaotai-m5stack-cores3-lite-app-v1.5.1-full-16MB.bin",
           "sha256": "b978119b4bfe25f05da569fa72937f2f6aab03531e877fb7ca0cb824a2727a2f",
           "status": "published"
-        }
-      ]
-    },
-    {
-      "slug": "m5stack-cores3-lite-ili9342c",
-      "model": "M5Stack开发板-ESP32-S3(CoreS3-Lite，ILI9342C)",
-      "chip": "ESP32-S3",
-      "releases": [
+        },
         {
           "version": "v1.2.0-beta.1 · xiaotai（测试版）",
           "bin_url": "./firmware/v1.2.0-beta.1_m5stack-cores3-lite_ili9342c_merged.bin",
           "sha256": "702e1166bab0f7a5ab85a6af144d9b158a87c859278b40fcb13df7c00c556c95",
-          "status": "published",
-          "recommended": true
+          "status": "published"
         }
       ]
     },

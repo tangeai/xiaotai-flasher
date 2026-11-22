@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { downloadFirmware, publishedBoards } from '../src/catalog.mjs';
+import { canonicalBoardSlug, downloadFirmware, publishedBoards } from '../src/catalog.mjs';
 
 test('the manual firmware catalog loads and uses the Nginx BIN paths', () => {
   const file = new URL('../boards.json', import.meta.url);
@@ -62,4 +62,13 @@ test('displays the current prerelease label for older external catalogs', () => 
   const board = { slug: 'sample', model: 'sample', chip: 'ESP32', releases: [release] };
   const [loaded] = publishedBoards({ boards: [board] }, 'https://example.com/boards.json');
   assert.equal(loaded.versions[0].version, 'v1.5.0 · xiaotai-esp32（测试版）');
+});
+
+test('the CoreS3-Lite display variant resolves to the same catalog board', () => {
+  const catalog = JSON.parse(readFileSync(new URL('../boards.json', import.meta.url)));
+  const slug = canonicalBoardSlug('m5stack-cores3-lite-ili9342c');
+  const boards = catalog.boards.filter((board) => canonicalBoardSlug(board.slug) === slug);
+  assert.equal(boards.length, 1);
+  assert.equal(boards[0].slug, 'm5stack-cores3-lite');
+  assert.ok(boards[0].releases.some((release) => release.bin_url.includes('_ili9342c_')));
 });
