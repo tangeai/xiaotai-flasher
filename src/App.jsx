@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import brandMark from './assets/xiaotai-brand-mark.png';
 import { loadBoards } from './catalog.mjs';
 import { prepareFirmware } from './firmware.mjs';
 import { settingFields } from './settings.mjs';
@@ -931,9 +932,13 @@ export function App() {
     <>
       <header className="app-header">
         <a className="brand" href="https://xiaotai.chat/" aria-label="小钛官网">
-          <span className="brand-mark" aria-hidden="true">
-            钛
-          </span>
+          <img
+            className="brand-mark"
+            src={brandMark}
+            alt=""
+            width="32"
+            height="32"
+          />
           <span className="brand-name">小钛</span>
         </a>
         <div className="app-title">

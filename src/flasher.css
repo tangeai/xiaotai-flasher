@@ -145,13 +145,8 @@ input:where([type='checkbox'], [type='radio']) {
   white-space: nowrap;
 }
 .brand-mark {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
-  background: var(--accent);
-  color: white;
+  display: block;
+  flex: none;
 }
 .app-title {
   display: flex;
