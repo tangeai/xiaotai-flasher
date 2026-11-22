@@ -258,7 +258,8 @@ async function archiveEntries(release) {
   );
   const entries = [];
   for (const board of boards) {
-    const chip = normalizeChip(board.target);
+    const bk = board.target?.toLowerCase() === 'bk7258';
+    const chip = bk ? 'BK7258' : normalizeChip(board.target);
     if (!chip) continue;
     const variants = board.variants ?? [];
     for (const variant of [
@@ -266,7 +267,8 @@ async function archiveEntries(release) {
       ...variants.filter((item) => item.name !== 'default'),
     ]) {
       const suffix = variant.name === 'default' ? '' : '_' + variant.name;
-      const filename = `${release.tag_name}_${board.id}${suffix}_merged.bin`;
+      const imageType = bk ? 'all-app' : 'merged';
+      const filename = `${release.tag_name}_${board.id}${suffix}_${imageType}.bin`;
       if (!release.assets.some((asset) => asset.name === filename)) continue;
       entries.push(
         releaseEntry(
@@ -276,6 +278,7 @@ async function archiveEntries(release) {
             slug: variant.default ? board.id : `${board.id}-${variant.name}`,
             model: suffix ? `${board.model}（${variant.name}）` : board.model,
             chip,
+            flashBytes: bk ? board.resources?.flash_bytes : undefined,
           },
           assetDetails(release, filename),
         ),
@@ -294,6 +297,9 @@ function assemble(entries) {
         slug: entry.slug,
         model: entry.model,
         chip: entry.chip,
+        ...(Number.isSafeInteger(entry.flashBytes) && entry.flashBytes > 0
+          ? { flash_bytes: entry.flashBytes }
+          : {}),
         releases: [],
       });
     }
@@ -314,7 +320,7 @@ function assemble(entries) {
       prerelease: entry.prerelease,
     });
   }
-  if (!boards.size) throw new Error('没有找到可烧录的已发布完整 ESP32 镜像。');
+  if (!boards.size) throw new Error('没有找到可烧录的已发布完整镜像。');
 
   const catalog = [...boards.values()].sort((left, right) =>
     left.slug.localeCompare(right.slug),

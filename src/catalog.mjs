@@ -39,7 +39,14 @@ export function publishedBoards(data, catalogURL) {
     }
     slugs.add(board.slug);
     const chip = board.chip.trim().toUpperCase();
-    if (!/^ESP32(?:-[A-Z0-9]+)?$/.test(chip)) return [];
+    if (chip !== 'BK7258' && !/^ESP32(?:-[A-Z0-9]+)?$/.test(chip)) return [];
+    const flashBytes = board.flash_bytes;
+    if (
+      flashBytes !== undefined &&
+      (!Number.isSafeInteger(flashBytes) || flashBytes <= 0)
+    ) {
+      throw new Error(`${board.model} 的 Flash 容量配置无效。`);
+    }
     const versionNames = new Set();
     const versions = board.releases.flatMap((release) => {
       if (
@@ -70,7 +77,15 @@ export function publishedBoards(data, catalogURL) {
       throw new Error(`${board.model} 只能有一个推荐版本。`);
     }
     if (!versions.length) return [];
-    return [{ slug: board.slug, model: board.model.trim(), chip, versions }];
+    return [
+      {
+        slug: board.slug,
+        model: board.model.trim(),
+        chip,
+        flashBytes,
+        versions,
+      },
+    ];
   });
 }
 

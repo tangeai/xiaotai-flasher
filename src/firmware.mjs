@@ -26,6 +26,7 @@ export function prepareFirmware(
       release,
       chip: board.chip,
       boardModel: board.model,
+      flashBytes: board.flashBytes,
     };
   }
   const kind = segmented ? 'segments' : 'complete';

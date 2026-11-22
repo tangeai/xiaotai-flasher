@@ -1,14 +1,15 @@
 # 小钛在线烧录工作台
 
-用浏览器通过 USB 串口烧录小钛或本地 ESP32 固件，并在同一页面查看设备串口日志。前端使用 React + Vite，烧录使用乐鑫 `esptool-js`。工作台按静态站点部署，板卡目录通过独立 JSON 链接维护。
+用浏览器通过 USB 串口烧录小钛或本地 ESP32、BK7258 固件，并在同一页面查看设备串口日志。前端使用 React + Vite，ESP32 烧录使用乐鑫 `esptool-js`，BK7258 使用 Beken UART 下载协议。工作台按静态站点部署，板卡目录通过独立 JSON 链接维护。
 
 ## 功能
 
 | 功能 | 说明 |
 | --- | --- |
 | ESP32 在线烧录 | 适用 ESP32、ESP32-S2、ESP32-S3、ESP32-C2、ESP32-C3、ESP32-C5、ESP32-C6、ESP32-H2、ESP32-P4 |
+| BK7258 在线烧录 | 支持原始 `all-app.bin` 从 `0x0` 写入，烧录后读取 Flash CRC 校验 |
 | 固件选择 | 已配置目录时默认显示小钛固件。也可导入本地完整 `.bin`。完整镜像固定从 `0x0` 写入 |
-| 写入校验 | 连接后识别芯片和 Flash 容量。校验在线 BIN 的 SHA‑256 和启动镜像完整性，写入后对比设备 Flash 的 MD5 |
+| 写入校验 | 校验在线 BIN 的 SHA‑256。ESP32 写入后对比 Flash 的 MD5，BK7258 写入后对比 Flash 的 CRC |
 | 串口日志 | 独立连接运行中的设备，或在烧录结束后自动打开。可选波特率、暂停滚动、清空、复制和下载 |
 | 高级设置 | 支持多 BIN 分段地址、烧录波特率、Flash 模式、频率、容量及复位方式。全片擦除默认关闭 |
 | 工作台布局 | 固件和进度与日志并排显示，支持全屏，右上角可打开连接与排查 |
@@ -24,7 +25,15 @@
 
 连接失败时，打开右上角「连接与排查」，按板卡说明进入下载模式。写入不稳定时，可在高级设置中降低烧录波特率。
 
-完整 BIN 会覆盖镜像写入范围内的扇区。需要清掉全片旧数据时，在高级设置勾选「全片擦除」。模式、时钟和容量默认沿用原镜像头。手动修改需提供对应芯片的启动镜像，工作台会重新计算其 SHA‑256。应使用板卡固件说明指定的参数。 [乐鑫 Flash 参数说明](https://docs.espressif.com/projects/esptool/en/latest/esp32s3/esptool/flash-modes.html)
+ESP32 完整 BIN 会覆盖镜像写入范围内的扇区。需要清掉全片旧数据时，在高级设置勾选「全片擦除」。模式、时钟和容量默认沿用原镜像头。手动修改需提供对应芯片的启动镜像，工作台会重新计算其 SHA‑256。应使用板卡固件说明指定的参数。 [乐鑫 Flash 参数说明](https://docs.espressif.com/projects/esptool/en/latest/esp32s3/esptool/flash-modes.html)
+
+### BK7258 烧录和看日志
+
+1. 将开发板的下载串口 `DL_UART0` 接到电脑，在工作台选择 **BK7258**。选择对应板型的在线版本，或导入板卡原始 `all-app.bin`。
+2. 点「连接设备」并选择 UART0。页面显示等待连接后，按复位键或保持串口连线并重新给开发板上电。握手成功后点「开始烧录」。
+3. 等待写入和 CRC 校验完成。串口日志沿用同一工作台，UART0 默认 `115200`。要看最早的启动日志，可以先连接日志串口，再手动复位。
+
+本分支支持小钛立创和觅感 8 MiB Flash 板型使用的原始镜像布局。OTA 文件、安全下载包、分段地址、整片擦除和其他 BK 芯片暂未开放。Flash 型号无法识别时会停止烧录。 [Beken BK7258 开发指南](https://docs.riselink.ai/arminodoc/bk_avdk_smp/smp_doc/bk7258/en/v3.1.1/get-started/index.html#burn-code) · [小钛板型说明](https://github.com/tangeai/xiaotai#选择开发板和固件)
 
 ## 配置小钛固件目录
 
@@ -42,7 +51,7 @@
 
 ### 手动上传新固件
 
-1. 用 `sha256sum 新固件.bin` 计算摘要，将适配该板型、从 `0x0` 写入的完整 BIN 以 `<摘要>.bin` 的文件名上传到服务器的 `/opt/xiaotai-flasher/board-catalog/firmware/`。
+1. 用 `sha256sum 新固件.bin` 计算摘要，将适配该板型、从 `0x0` 写入的完整 BIN 以 `<摘要>.bin` 的文件名上传到服务器的 `/opt/xiaotai-flasher/board-catalog/firmware/`。BK7258 需使用原始 `all-app.bin`。
 2. 在仓库根目录的 [`boards.json`](boards.json) 对应板型下添加版本。`bin_url` 填 `./firmware/<摘要>.bin`，`sha256` 填相同摘要。设为推荐版本时，去掉同一板型旧版本的 `recommended: true`。运行 `npm test` 检查格式和下载路径。
 3. BIN 可下载后，将更新后的 `boards.json` 上传到 `/opt/xiaotai-flasher/board-catalog/boards.json`，刷新页面确认新版本。前端无需重新构建。由人工维护目录时，避免运行会重新生成目录的 `catalog` 命令。
 
@@ -56,7 +65,7 @@ node scripts/generate-boards.mjs --output-dir ./releases/board-catalog
 
 输出包含 `boards.json` 和 `firmware/`。将两者一起发布到同一 HTTPS 目录，再把 `boards_url` 指向生成的 `boards.json`。BIN 地址使用相对路径，由目录所在站点提供下载。站点与工作台不同源时，为 JSON 和 BIN 配置 CORS。
 
-默认收录正式版 ESP32 完整镜像。需要体验版时加 `--include-prerelease`，目录会标注体验版并优先推荐正式版。同一板型在两个仓库都有正式版时，优先推荐 `xiaotai-esp32` 的最新发布。生成器复用已经校验的 BIN，并在新目录的固件全部校验通过后替换 `boards.json`。GitHub API 限流时可提供 `GITHUB_TOKEN`。
+默认收录正式版 ESP32 完整镜像和 BK7258 原始 `all-app.bin`。需要体验版时加 `--include-prerelease`，目录会标注体验版并优先推荐正式版。同一板型在两个仓库都有正式版时，优先推荐 `xiaotai-esp32` 的最新发布。生成器复用已经校验的 BIN，并在新目录的固件全部校验通过后替换 `boards.json`。GitHub API 限流时可提供 `GITHUB_TOKEN`。
 
 ### 板卡 JSON 格式
 
@@ -84,6 +93,7 @@ node scripts/generate-boards.mjs --output-dir ./releases/board-catalog
 ```
 
 - `slug` 为唯一板卡标识。后台可通过 `/web-flasher?board=lckfb-esp32s3` 预选该板。
+- 可用 `flash_bytes` 声明要求的 Flash 容量。声明后，设备检测到的容量必须一致。
 - 每块板的 `version` 唯一。`status` 支持 `draft`、`published`、`offline`，页面仅显示 `published`。每块板最多有一个推荐版本。
 - `bin_url` 指向完整 BIN，相对地址以板卡 JSON 的位置为准。`sha256` 填实际文件的 64 位十六进制摘要。
 - 使用仓库自带的同源 Nginx 路由时，BIN 必须位于 `firmware/`，文件名为 `<SHA-256 小写十六进制>.bin`。生成脚本会自动采用此命名。

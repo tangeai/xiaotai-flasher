@@ -12,6 +12,7 @@ const recommendedVersion = (board) =>
   board?.versions.find((version) => version.recommended)?.version ??
   board?.versions[0]?.version ??
   '';
+const platformFor = (chip) => (chip === 'BK7258' ? 'bk7258' : 'esp32');
 let nextSegmentId = 0;
 const newSegment = () => ({ id: nextSegmentId++, file: null, offset: '' });
 
@@ -27,12 +28,15 @@ function Check({ children, help, ...props }) {
   );
 }
 
-function FlashOptions({ settings, change, disabled, official, connected }) {
+function FlashOptions({ settings, change, disabled, official, connected, bk }) {
+  const fields = bk
+    ? settingFields.filter(([key]) => key === 'after-reset')
+    : settingFields;
   return (
     <details className="settings-group" id="advanced">
       <summary>高级设置</summary>
       <div className="options">
-        {settingFields.map(([key, label, options, help]) => (
+        {fields.map(([key, label, options, help]) => (
           <label className="field" key={key}>
             {label}
             <select
@@ -54,34 +58,50 @@ function FlashOptions({ settings, change, disabled, official, connected }) {
             <small>{help}</small>
           </label>
         ))}
-        <Check
-          checked={settings.compress}
-          disabled={disabled}
-          onChange={(event) => change('compress', event.target.checked)}
-          help="压缩串口传输的数据，写入 Flash 的内容保持原样。"
-        >
-          压缩传输
-        </Check>
-        <details className="span">
-          <summary>擦除选项</summary>
-          <Check
-            checked={settings.eraseAll}
-            disabled={disabled}
-            onChange={(event) => change('eraseAll', event.target.checked)}
-            help="写入前擦除整片 Flash。默认只擦除镜像覆盖的扇区。"
-          >
-            全片擦除
-          </Check>
-        </details>
-        <small className="span">
-          写入后始终校验。模式、频率和容量覆写只用于对应芯片的启动镜像位置。
-        </small>
+        {bk ? (
+          <small className="span">
+            烧录通过 UART0，固定 115200 波特率。连接时按提示复位设备。
+          </small>
+        ) : (
+          <>
+            <Check
+              checked={settings.compress}
+              disabled={disabled}
+              onChange={(event) => change('compress', event.target.checked)}
+              help="压缩串口传输的数据，写入 Flash 的内容保持原样。"
+            >
+              压缩传输
+            </Check>
+            <details className="span">
+              <summary>擦除选项</summary>
+              <Check
+                checked={settings.eraseAll}
+                disabled={disabled}
+                onChange={(event) => change('eraseAll', event.target.checked)}
+                help="写入前擦除整片 Flash。默认只擦除镜像覆盖的扇区。"
+              >
+                全片擦除
+              </Check>
+            </details>
+            <small className="span">
+              写入后始终校验。模式、频率和容量覆写只用于对应芯片的启动镜像位置。
+            </small>
+          </>
+        )}
       </div>
     </details>
   );
 }
 
-function FirmwarePicker({ catalog, origin, choose, selection, change, busy }) {
+function FirmwarePicker({
+  catalog,
+  origin,
+  choose,
+  selection,
+  change,
+  busy,
+  bk,
+}) {
   const board = catalog.boards.find(
     (candidate) => candidate.slug === selection.slug,
   );
@@ -172,7 +192,7 @@ function FirmwarePicker({ catalog, origin, choose, selection, change, busy }) {
         )}
       </div>
       <div hidden={origin !== 'local'}>
-        <label className="field" hidden={selection.segmented}>
+        <label className="field" hidden={!bk && selection.segmented}>
           完整镜像 · 起始地址 <code>0x0</code>
           <input
             type="file"
@@ -181,9 +201,13 @@ function FirmwarePicker({ catalog, origin, choose, selection, change, busy }) {
             disabled={busy}
             onChange={(event) => change({ merged: event.target.files[0] })}
           />
-          <small>选择适配开发板的完整 BIN。</small>
+          <small>
+            {bk
+              ? '选择适配开发板的 BK7258 原始 all-app.bin。'
+              : '选择适配开发板的完整 BIN。'}
+          </small>
         </label>
-        <details className="settings-group" id="segments">
+        <details className="settings-group" id="segments" hidden={bk}>
           <summary>分段烧录</summary>
           <Check
             checked={selection.segmented}
@@ -563,15 +587,20 @@ function HelpDialog({ dialogRef, onClose }) {
       <details className="settings-group">
         <summary>无法进入下载模式</summary>
         <p>
-          按板卡指南操作 BOOT / RESET
+          ESP32 按板卡指南操作 BOOT / RESET
           键，再使用高级设置里的「手动进入下载模式」。写入不稳定时可把烧录波特率降到
           115200。
+        </p>
+        <p className="actions">
+          BK7258 使用下载串口
+          UART0。点击「连接设备」后，按复位键或保持串口连接并重新给开发板上电，等待握手。
         </p>
       </details>
       <details className="settings-group">
         <summary>看不到设备日志</summary>
         <p>
           确认固件的日志输出接口和波特率。若重启后设备的串口变化，请重新选择日志串口。
+          BK7258 的 UART0 日志默认使用 115200 波特率。
         </p>
       </details>
       <details className="settings-group">
@@ -605,6 +634,7 @@ export function App() {
     message: '正在读取固件目录…',
   });
   const [origin, setOrigin] = useState('local');
+  const [platform, setPlatform] = useState('esp32');
   const [selection, setSelection] = useState(() => ({
     slug: '',
     version: '',
@@ -654,13 +684,15 @@ export function App() {
                 ? ''
                 : '暂无已发布的小钛固件，可导入本地 BIN。',
         });
-        setSelection((old) => ({
-          ...old,
-          slug: board?.slug ?? '',
-          version: recommendedVersion(board),
-        }));
-        if (board && (!requested || requestedBoard) && !userSelected.current)
-          setOrigin('official');
+        if (board && !userSelected.current) {
+          setPlatform(platformFor(board.chip));
+          setSelection((old) => ({
+            ...old,
+            slug: board.slug,
+            version: recommendedVersion(board),
+          }));
+          if (!requested || requestedBoard) setOrigin('official');
+        }
       })
       .catch((error) => {
         if (abort.signal.aborted) return;
@@ -699,25 +731,54 @@ export function App() {
     setSettings((old) => ({ ...old, [key]: value }));
   }
 
+  const bk = platform === 'bk7258';
+  const platformBoards = catalog.boards.filter(
+    (board) => platformFor(board.chip) === platform,
+  );
+  const board =
+    platformBoards.find(({ slug }) => slug === selection.slug) ??
+    platformBoards[0];
+  const selected = {
+    ...selection,
+    slug: board?.slug ?? '',
+    version: board?.versions.some(
+      ({ version }) => version === selection.version,
+    )
+      ? selection.version
+      : recommendedVersion(board),
+  };
+
+  function changePlatform(value) {
+    userSelected.current = true;
+    setPlatform(value);
+    if (!catalog.boards.some((board) => platformFor(board.chip) === value))
+      setOrigin('local');
+  }
+
   let ready;
   let readinessMessage;
   if (!serialAvailable)
     readinessMessage = '请在桌面 Chrome 或 Edge 中打开 HTTPS 烧录页。';
   else {
     try {
-      const board = catalog.boards.find(({ slug }) => slug === selection.slug);
       const firmware = prepareFirmware(
         {
-          ...selection,
+          ...selected,
           board,
           origin,
-          expectedChip: settings['expected-chip'],
+          segmented: !bk && selected.segmented,
+          expectedChip: bk ? 'BK7258' : settings['expected-chip'],
         },
         device?.capacity,
       );
       if (!device) readinessMessage = '连接开发板后即可开始烧录。';
       else if (firmware.chip !== 'auto' && firmware.chip !== device.chip) {
         readinessMessage = `固件需要 ${firmware.chip}，当前设备为 ${device.chip}。`;
+      } else if (
+        firmware.flashBytes &&
+        firmware.flashBytes !== device.capacity
+      ) {
+        readinessMessage = `固件需要 ${firmware.flashBytes / 1048576} MiB Flash，当前设备为 ${device.capacity / 1048576} MiB。`;
       } else {
         ready = firmware;
         readinessMessage =
@@ -743,7 +804,7 @@ export function App() {
         flashMode: settings['flash-mode'],
         flashFreq: settings['flash-freq'],
         flashSize: settings['flash-size'],
-        eraseAll: settings.eraseAll,
+        eraseAll: !bk && settings.eraseAll,
         compress: settings.compress,
       },
     });
@@ -773,9 +834,9 @@ export function App() {
           <span className="brand-name">小钛</span>
         </a>
         <div className="app-title">
-          <h1>ESP32 系列在线烧录与串口日志</h1>
+          <h1>ESP32 / BK7258 在线烧录与串口日志</h1>
           <p className="muted">
-            适用芯片：ESP32、S2、S3、C2、C3、C5、C6、H2、P4
+            适用芯片：ESP32、S2、S3、C2、C3、C5、C6、H2、P4、BK7258
           </p>
         </div>
         <nav className="header-actions" aria-label="工作台工具">
@@ -806,6 +867,17 @@ export function App() {
         )}
         <section className="device-bar row" aria-label="烧录设备连接">
           <h2>烧录设备</h2>
+          <label className="row">
+            芯片平台
+            <select
+              value={platform}
+              disabled={busy || Boolean(device)}
+              onChange={(event) => changePlatform(event.target.value)}
+            >
+              <option value="esp32">ESP32 系列</option>
+              <option value="bk7258">BK7258</option>
+            </select>
+          </label>
           <p
             className={`device-status ${deviceError ? 'error' : 'muted'}`}
             role="status"
@@ -826,12 +898,14 @@ export function App() {
               className="btn"
               type="button"
               disabled={busy || !serialAvailable}
-              onClick={() =>
+              onClick={() => {
+                userSelected.current = true;
                 workbench.connect({
+                  platform,
                   baudrate: Number(settings['write-rate']),
                   before: settings['before-reset'],
-                })
-              }
+                });
+              }}
             >
               连接设备
             </button>
@@ -841,15 +915,16 @@ export function App() {
           <section className="flash-panel" aria-labelledby="firmware-title">
             <div className="flash-settings">
               <FirmwarePicker
-                catalog={catalog}
+                catalog={{ ...catalog, boards: platformBoards }}
                 origin={origin}
                 choose={(value) => {
                   userSelected.current = true;
                   setOrigin(value);
                 }}
-                selection={selection}
+                selection={selected}
                 change={changeSelection}
                 busy={busy}
+                bk={bk}
               />
               <FlashOptions
                 settings={settings}
@@ -857,6 +932,7 @@ export function App() {
                 disabled={busy}
                 official={origin === 'official'}
                 connected={Boolean(device)}
+                bk={bk}
               />
               {completed && (
                 <div className="actions">
@@ -936,7 +1012,7 @@ export function App() {
         <h2 id="confirm-title">确认烧录</h2>
         {pending && <FlashSummary firmware={pending} chip={device?.chip} />}
         <p className="muted actions">
-          {settings.eraseAll
+          {!bk && settings.eraseAll
             ? '将擦除整片 Flash。请确认现有设备数据可以清除。'
             : pending?.kind === 'segments'
               ? '将擦除镜像覆盖的 Flash 扇区。'

@@ -122,9 +122,17 @@ export function useWorkbench() {
         const port = await serial.requestPort();
         await releaseMonitor();
         update({ flashLog: '', progress: null, complete: false });
-        flashStatus('正在连接并识别 ESP32…');
-        const { connectEsp32 } = await import('./esp32.mjs');
-        const session = await connectEsp32(port, options, (line) =>
+        const bk = options.platform === 'bk7258';
+        flashStatus(
+          bk
+            ? '等待 BK7258 下载串口。请复位或重新上电。'
+            : '正在连接并识别 ESP32…',
+        );
+        if (bk) setTab('flash');
+        const connectDevice = bk
+          ? (await import('./bk7258.mjs')).connectBk7258
+          : (await import('./esp32.mjs')).connectEsp32;
+        const session = await connectDevice(port, options, (line) =>
           appendLog('flashLog', line),
         );
         flash.current = { port, session };

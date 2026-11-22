@@ -135,6 +135,48 @@
           "recommended": true
         }
       ]
+    },
+    {
+      "slug": "lckfb-bk7258",
+      "model": "立创·实战派 BK7258",
+      "chip": "BK7258",
+      "releases": [
+        {
+          "version": "v1.1.0 · xiaotai",
+          "bin_url": "./firmware/f542472fdf2c7ad5352a2687168756830678923171c84be2c7a829861c599796.bin",
+          "sha256": "f542472fdf2c7ad5352a2687168756830678923171c84be2c7a829861c599796",
+          "status": "published",
+          "recommended": true
+        },
+        {
+          "version": "v1.0.0 · xiaotai",
+          "bin_url": "./firmware/24a8ecc0a906efbeebb445197a04838c64de548e3264f846016144a14e87553d.bin",
+          "sha256": "24a8ecc0a906efbeebb445197a04838c64de548e3264f846016144a14e87553d",
+          "status": "published"
+        }
+      ],
+      "flash_bytes": 8388608
+    },
+    {
+      "slug": "mgkfb-bk7258",
+      "model": "觅感 AI 玩具开发板-BK7258（双屏眼睛）",
+      "chip": "BK7258",
+      "releases": [
+        {
+          "version": "v1.1.0 · xiaotai",
+          "bin_url": "./firmware/a2d33eb5e302d5927cfb20800765e90a0ad4460143cbfb2ef1a825db3ad83278.bin",
+          "sha256": "a2d33eb5e302d5927cfb20800765e90a0ad4460143cbfb2ef1a825db3ad83278",
+          "status": "published",
+          "recommended": true
+        },
+        {
+          "version": "v1.0.0 · xiaotai",
+          "bin_url": "./firmware/2c7fb16c3715ce7a9eb44cbd8222e817096f286d9c4c5bc778502d5e23167428.bin",
+          "sha256": "2c7fb16c3715ce7a9eb44cbd8222e817096f286d9c4c5bc778502d5e23167428",
+          "status": "published"
+        }
+      ],
+      "flash_bytes": 8388608
     }
   ]
 }
