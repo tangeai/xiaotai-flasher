@@ -148,7 +148,7 @@ sudo /opt/xiaotai-flasher/deploy-prod.sh update
 
 仅固件更新时，运行 `sudo /opt/xiaotai-flasher/deploy-prod.sh catalog`。构建成功后 `update` 会切换前端版本。需要回滚前端时，用 `/opt/xiaotai-flasher/deploy-prod.sh status` 查看版本名，再运行 `sudo /opt/xiaotai-flasher/deploy-prod.sh rollback <版本名>`。
 
-如果 `catalog` 下载失败，先根据日志检查该 GitHub 地址，再重跑 `catalog`。脚本会重试临时网络错误，并复用已通过校验的 BIN。首次生成成功后，线上 `board-catalog/boards.json` 才能返回 `200`。
+如果 `catalog` 下载失败，先根据日志检查该 GitHub 地址，再重跑 `catalog`。Release 附件通常会跳转到 `release-assets.githubusercontent.com`，服务器也需要能访问该域名。首次上线可以先生成正式版目录，再加 `--include-prerelease` 更新体验版。脚本会重试临时网络错误，并复用已校验的 BIN。
 
 ## 本地开发
 

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, mkdtemp, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { Readable, Transform } from 'node:stream';
+import { Readable, Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { setTimeout as wait } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
@@ -60,11 +60,11 @@ function errorDetail(error) {
   return cause ? `${error.message} (${cause})` : error.message;
 }
 
-async function readMetadata(url, format, api = false) {
+async function readMetadata(url) {
   for (let attempt = 1; attempt <= requestAttempts; attempt += 1) {
     try {
-      const response = await request(url, { api });
-      return { data: await response[format](), headers: response.headers };
+      const response = await request(url, { api: true });
+      return { data: await response.json(), headers: response.headers };
     } catch (error) {
       const message = `${url}：${errorDetail(error)}`;
       if (!retryable(error) || attempt === requestAttempts) {
@@ -78,7 +78,7 @@ async function readMetadata(url, format, api = false) {
   }
 }
 
-const api = (path) => readMetadata(apiRoot + path, 'json', true);
+const api = (path) => readMetadata(apiRoot + path);
 
 async function listReleases(repository, includePrerelease) {
   const releases = [];
@@ -173,14 +173,10 @@ function atZero(offset) {
 
 async function espEntries(release) {
   const manifestAsset = assetDetails(release, 'release-manifest.json');
-  const { data } = await readMetadata(manifestAsset.url, 'arrayBuffer');
-  const bytes = Buffer.from(data);
-  if (
-    bytes.length !== manifestAsset.bytes ||
-    createHash('sha256').update(bytes).digest('hex') !== manifestAsset.sha256
-  ) {
-    throw new Error(`${release.tag_name} 发布清单校验失败`);
-  }
+  const bytes = await transferAsset(
+    manifestAsset,
+    `${release.tag_name}/${manifestAsset.filename}`,
+  );
   const manifest = JSON.parse(bytes.toString('utf8'));
   if (manifest.tag !== release.tag_name)
     throw new Error(`${release.tag_name} 发布清单 tag 不一致`);
@@ -343,75 +339,85 @@ async function validCachedImage(path, image) {
   return hash.digest('hex') === image.sha256;
 }
 
-async function downloadImage(image, temporary) {
+async function downloadAsset(asset, temporary) {
   const controller = new AbortController();
+  let host = new URL(asset.url).hostname;
+  let bytes = 0;
   const idle = setTimeout(() => {
-    const error = new Error(`连续 ${downloadIdleMs / 1000} 秒未收到固件数据`);
+    const error = new Error(
+      `连续 ${downloadIdleMs / 1000} 秒未收到数据（${host}，已收到 ${bytes}/${asset.bytes} 字节）`,
+    );
     error.name = 'TimeoutError';
     controller.abort(error);
   }, downloadIdleMs);
-  let bytes = 0;
+  const chunks = [];
   const hash = createHash('sha256');
   const verify = new Transform({
     transform(chunk, _encoding, done) {
       idle.refresh();
       bytes += chunk.length;
-      if (bytes > image.bytes)
-        return done(new Error('下载固件超出 Release 中的大小'));
+      if (bytes > asset.bytes)
+        return done(new Error('下载内容超出 Release 中的大小'));
       hash.update(chunk);
       done(null, chunk);
     },
   });
   try {
-    const response = await request(image.url, { signal: controller.signal });
-    if (!response.body) throw new Error('固件下载没有响应内容');
+    const response = await request(asset.url, { signal: controller.signal });
+    if (!response.body) throw new Error('下载没有响应内容');
+    if (response.url) host = new URL(response.url).hostname;
     idle.refresh();
-    await pipeline(
-      Readable.fromWeb(response.body),
-      verify,
-      createWriteStream(temporary, { flags: 'wx' }),
-      { signal: controller.signal },
-    );
+    const output = temporary
+      ? createWriteStream(temporary, { flags: 'wx' })
+      : new Writable({
+          write(chunk, _encoding, done) {
+            chunks.push(chunk);
+            done();
+          },
+        });
+    await pipeline(Readable.fromWeb(response.body), verify, output, {
+      signal: controller.signal,
+    });
   } catch (error) {
     if (controller.signal.aborted) throw controller.signal.reason;
     throw error;
   } finally {
     clearTimeout(idle);
   }
-  if (bytes !== image.bytes) {
-    const error = new Error(
-      `固件下载不完整，只收到 ${bytes}/${image.bytes} 字节`,
-    );
+  if (bytes !== asset.bytes) {
+    const error = new Error(`下载不完整，只收到 ${bytes}/${asset.bytes} 字节`);
     error.code = 'ERR_STREAM_PREMATURE_CLOSE';
     throw error;
   }
-  if (hash.digest('hex') !== image.sha256) {
-    throw new Error('下载固件 SHA‑256 校验失败');
+  if (hash.digest('hex') !== asset.sha256) {
+    throw new Error('下载内容 SHA‑256 校验失败');
+  }
+  if (!temporary) return Buffer.concat(chunks, bytes);
+}
+
+async function transferAsset(asset, label, temporary) {
+  for (let attempt = 1; attempt <= requestAttempts; attempt += 1) {
+    console.log(`下载 ${label}（${attempt}/${requestAttempts}）`);
+    try {
+      return await downloadAsset(asset, temporary);
+    } catch (error) {
+      const detail = errorDetail(error);
+      if (!retryable(error) || attempt === requestAttempts) {
+        throw new Error(`${label} 下载失败：${detail}（${asset.url}）`, {
+          cause: error,
+        });
+      }
+      console.warn(`${label} 下载中断，将重试：${detail}`);
+      if (temporary) await rm(temporary, { force: true });
+      await wait(1000 * attempt);
+    }
   }
 }
 
 async function mirrorImage(image, destination, temporary) {
   if (await validCachedImage(destination, image)) return;
-  for (let attempt = 1; attempt <= requestAttempts; attempt += 1) {
-    console.log(`下载 ${image.filename}（${attempt}/${requestAttempts}）`);
-    try {
-      await downloadImage(image, temporary);
-    } catch (error) {
-      const detail = errorDetail(error);
-      if (!retryable(error) || attempt === requestAttempts) {
-        throw new Error(
-          `${image.filename} 下载失败：${detail}（${image.url}）`,
-          { cause: error },
-        );
-      }
-      console.warn(`${image.filename} 下载中断，将重试：${detail}`);
-      await rm(temporary, { force: true });
-      await wait(1000 * attempt);
-      continue;
-    }
-    await rename(temporary, destination);
-    return;
-  }
+  await transferAsset(image, image.filename, temporary);
+  await rename(temporary, destination);
 }
 
 async function generate(output, includePrerelease) {
@@ -419,11 +425,10 @@ async function generate(output, includePrerelease) {
     listReleases(espRepo, includePrerelease),
     listReleases(archiveRepo, includePrerelease),
   ]);
-  const [esp, archived] = await Promise.all([
-    Promise.all(espReleases.map(espEntries)),
-    Promise.all(archiveReleases.map(archiveEntries)),
-  ]);
-  const { catalog, images } = assemble([...esp.flat(), ...archived.flat()]);
+  const esp = [];
+  for (const release of espReleases) esp.push(...(await espEntries(release)));
+  const archived = await Promise.all(archiveReleases.map(archiveEntries));
+  const { catalog, images } = assemble([...esp, ...archived.flat()]);
   console.log(`正在校验 ${images.length} 个完整 BIN…`);
   const firmware = join(output, 'firmware');
   await mkdir(firmware, { recursive: true });
