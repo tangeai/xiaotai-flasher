@@ -40,6 +40,12 @@
 
 源码自带空目录，可直接导入本地 BIN。通过安装脚本部署后，修改部署根目录下的 `boards-source.json` 并执行 `update`。独立静态托管时，可直接修改站点中的 `boards-source.json`。
 
+### 手动上传新固件
+
+1. 用 `sha256sum 新固件.bin` 计算摘要，将适配该板型、从 `0x0` 写入的完整 BIN 以 `<摘要>.bin` 的文件名上传到服务器的 `/opt/xiaotai-flasher/board-catalog/firmware/`。
+2. 在仓库根目录的 [`boards.json`](boards.json) 对应板型下添加版本。`bin_url` 填 `./firmware/<摘要>.bin`，`sha256` 填相同摘要。设为推荐版本时，去掉同一板型旧版本的 `recommended: true`。运行 `npm test` 检查格式和下载路径。
+3. BIN 可下载后，将更新后的 `boards.json` 上传到 `/opt/xiaotai-flasher/board-catalog/boards.json`，刷新页面确认新版本。前端无需重新构建。由人工维护目录时，避免运行会重新生成目录的 `catalog` 命令。
+
 ### 从 GitHub Releases 生成目录
 
 在仓库根目录运行以下命令。`scripts/generate-boards.mjs` 读取 `tangeai/xiaotai-esp32` 和 `tangeai/xiaotai` 的 Release，自动配对板卡、完整镜像和 SHA‑256。
@@ -54,7 +60,7 @@ node scripts/generate-boards.mjs --output-dir ./releases/board-catalog
 
 ### 板卡 JSON 格式
 
-以下文件名、版本和摘要是示例。发布时请填写实际值，使用 `sha256sum 固件文件.bin` 可得到摘要。
+以下是当前立创开发板的一条记录。添加版本时填入新 BIN 的实际摘要。
 
 ```json
 {
@@ -65,9 +71,9 @@ node scripts/generate-boards.mjs --output-dir ./releases/board-catalog
       "chip": "ESP32-S3",
       "releases": [
         {
-          "version": "1.0.0",
-          "bin_url": "./firmware/lckfb-esp32s3-1.0.0-merged.bin",
-          "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "version": "v0.3.0 · xiaotai-esp32",
+          "bin_url": "./firmware/b368c59e5c300b9b7f021baa1c66aa34c1a12b5e00d6e2529f1dabd0a2ef3159.bin",
+          "sha256": "b368c59e5c300b9b7f021baa1c66aa34c1a12b5e00d6e2529f1dabd0a2ef3159",
           "status": "published",
           "recommended": true
         }
@@ -97,13 +103,14 @@ sudo mkdir -p /opt/xiaotai-flasher
 sudo git clone https://github.com/tangeai/xiaotai-flasher.git /opt/xiaotai-flasher/xiaotai-flasher
 ```
 
-直接运行仓库里的安装脚本。脚本会复用这个检出，构建工作台。安装成功后再生成正式版固件目录。
+直接运行仓库里的安装脚本。脚本会复用这个检出，构建工作台。
 
 ```bash
 sudo env BOARDS_URL=/web-flasher/board-catalog/boards.json \
-  bash /opt/xiaotai-flasher/xiaotai-flasher/scripts/install.sh &&
-sudo /opt/xiaotai-flasher/deploy-prod.sh catalog
+  bash /opt/xiaotai-flasher/xiaotai-flasher/scripts/install.sh
 ```
+
+安装成功后，按[手动上传新固件](#手动上传新固件)放置 BIN 和目录文件，或用 `sudo /opt/xiaotai-flasher/deploy-prod.sh catalog` 从 GitHub 生成正式版目录。
 
 `BOARDS_URL` 首次安装时写入部署目录的 `boards-source.json`。已有部署要改目录链接时，编辑该文件后执行 `update`。如果脚本提示找不到 `node` 或 `npm`，先用 `sudo node --version` 和 `sudo npm --version` 检查安装用户的环境。
 
@@ -146,7 +153,7 @@ curl -fsS https://xiaotai.chat/web-flasher/board-catalog/boards.json
 sudo /opt/xiaotai-flasher/deploy-prod.sh update
 ```
 
-仅固件更新时，运行 `sudo /opt/xiaotai-flasher/deploy-prod.sh catalog`。构建成功后 `update` 会切换前端版本。需要回滚前端时，用 `/opt/xiaotai-flasher/deploy-prod.sh status` 查看版本名，再运行 `sudo /opt/xiaotai-flasher/deploy-prod.sh rollback <版本名>`。
+仅固件更新时，沿用已选的目录维护方式。构建成功后 `update` 会切换前端版本。需要回滚前端时，用 `/opt/xiaotai-flasher/deploy-prod.sh status` 查看版本名，再运行 `sudo /opt/xiaotai-flasher/deploy-prod.sh rollback <版本名>`。
 
 如果 `catalog` 下载失败，先根据日志检查该 GitHub 地址，再重跑 `catalog`。Release 附件通常会跳转到 `release-assets.githubusercontent.com`，服务器也需要能访问该域名。首次上线可以先生成正式版目录，再加 `--include-prerelease` 更新体验版。脚本会重试临时网络错误，并复用已校验的 BIN。
 
@@ -158,4 +165,4 @@ npm run dev      # http://localhost:5173/
 ```
 
 执行 `npm run build` 生成 `dist/`，再用 `npm run preview` 检查构建结果。
-执行 `npm test` 可验证启动镜像校验与 Flash 参数修改。
+执行 `npm test` 可验证固件目录、启动镜像校验与 Flash 参数修改。

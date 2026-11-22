@@ -1,0 +1,140 @@
+{
+  "boards": [
+    {
+      "slug": "lckfb-esp32s3",
+      "model": "立创开发板-ESP32-S3",
+      "chip": "ESP32-S3",
+      "releases": [
+        {
+          "version": "v0.3.0 · xiaotai-esp32",
+          "bin_url": "./firmware/b368c59e5c300b9b7f021baa1c66aa34c1a12b5e00d6e2529f1dabd0a2ef3159.bin",
+          "sha256": "b368c59e5c300b9b7f021baa1c66aa34c1a12b5e00d6e2529f1dabd0a2ef3159",
+          "status": "published",
+          "recommended": true
+        },
+        {
+          "version": "v1.5.0 · xiaotai-esp32（体验版）",
+          "bin_url": "./firmware/23c9923b8a335e0140fc6de73c0f52a94e1405c92e40198f45b10cb7c7697fb3.bin",
+          "sha256": "23c9923b8a335e0140fc6de73c0f52a94e1405c92e40198f45b10cb7c7697fb3",
+          "status": "published"
+        },
+        {
+          "version": "v1.2.0-beta.1 · xiaotai（体验版）",
+          "bin_url": "./firmware/d786dab91cd134d7ef7ae6ccb2e98b36a66a1895b9aefc50d2a381110c280bd9.bin",
+          "sha256": "d786dab91cd134d7ef7ae6ccb2e98b36a66a1895b9aefc50d2a381110c280bd9",
+          "status": "published"
+        }
+      ]
+    },
+    {
+      "slug": "m5stack-cores3-lite",
+      "model": "M5Stack开发板-ESP32-S3(CoreS3-Lite)",
+      "chip": "ESP32-S3",
+      "releases": [
+        {
+          "version": "v0.3.0 · xiaotai-esp32",
+          "bin_url": "./firmware/321df475536497612f529495364870ee75d737077fe74069fc68e39fd08fc48f.bin",
+          "sha256": "321df475536497612f529495364870ee75d737077fe74069fc68e39fd08fc48f",
+          "status": "published",
+          "recommended": true
+        },
+        {
+          "version": "v1.5.1 · xiaotai-esp32（体验版）",
+          "bin_url": "./firmware/b978119b4bfe25f05da569fa72937f2f6aab03531e877fb7ca0cb824a2727a2f.bin",
+          "sha256": "b978119b4bfe25f05da569fa72937f2f6aab03531e877fb7ca0cb824a2727a2f",
+          "status": "published"
+        }
+      ]
+    },
+    {
+      "slug": "m5stack-cores3-lite-ili9342c",
+      "model": "M5Stack开发板-ESP32-S3(CoreS3-Lite，ILI9342C)",
+      "chip": "ESP32-S3",
+      "releases": [
+        {
+          "version": "v1.2.0-beta.1 · xiaotai（体验版）",
+          "bin_url": "./firmware/702e1166bab0f7a5ab85a6af144d9b158a87c859278b40fcb13df7c00c556c95.bin",
+          "sha256": "702e1166bab0f7a5ab85a6af144d9b158a87c859278b40fcb13df7c00c556c95",
+          "status": "published",
+          "recommended": true
+        }
+      ]
+    },
+    {
+      "slug": "waveshare-esp32p4-touch-lcd-43c-v10",
+      "model": "微雪开发板-ESP32-P4（4.3寸屏）",
+      "chip": "ESP32-P4",
+      "releases": [
+        {
+          "version": "v1.2.0-beta.1 · xiaotai（体验版）",
+          "bin_url": "./firmware/7447e5b875e254187fe0bf067a1e4b4a735781fd6121c77110875320fb713220.bin",
+          "sha256": "7447e5b875e254187fe0bf067a1e4b4a735781fd6121c77110875320fb713220",
+          "status": "published",
+          "recommended": true
+        }
+      ]
+    },
+    {
+      "slug": "waveshare-p4-rev3",
+      "model": "微雪开发板-ESP32-P4（3.5寸屏）",
+      "chip": "ESP32-P4",
+      "releases": [
+        {
+          "version": "v0.3.0 · xiaotai-esp32",
+          "bin_url": "./firmware/cde9353befeb59a37cbd45105e5d4cbe011f8748841bd8bebb7b92544395e3c3.bin",
+          "sha256": "cde9353befeb59a37cbd45105e5d4cbe011f8748841bd8bebb7b92544395e3c3",
+          "status": "published",
+          "recommended": true
+        },
+        {
+          "version": "v1.6.1 · xiaotai-esp32（体验版）",
+          "bin_url": "./firmware/fe432a8a4dec67866d4e52b4d8f68fe42a88ae943b5a6c7ca48e6a74a6c099e4.bin",
+          "sha256": "fe432a8a4dec67866d4e52b4d8f68fe42a88ae943b5a6c7ca48e6a74a6c099e4",
+          "status": "published"
+        }
+      ]
+    },
+    {
+      "slug": "wt99p461-s1-1v1",
+      "model": "启明开发板-ESP32-P4",
+      "chip": "ESP32-P4",
+      "releases": [
+        {
+          "version": "v0.3.0 · xiaotai-esp32",
+          "bin_url": "./firmware/52505c513312ecc947fec83184b45e271469ee5fb35fccd2e9be8482c6c71d07.bin",
+          "sha256": "52505c513312ecc947fec83184b45e271469ee5fb35fccd2e9be8482c6c71d07",
+          "status": "published",
+          "recommended": true
+        }
+      ]
+    },
+    {
+      "slug": "xmini-c3-v3",
+      "model": "Xmini-C3-V3 / ESP32-C3 / SSD1306 / ES8311 / 16 MB Flash",
+      "chip": "ESP32-C3",
+      "releases": [
+        {
+          "version": "xmini-c3-v3-app-v0.1.0 · xiaotai-esp32（体验版）",
+          "bin_url": "./firmware/398f95bbc9455678df4902fb8ade4a25330b2dfe0f8a41e598e1b69d737633f1.bin",
+          "sha256": "398f95bbc9455678df4902fb8ade4a25330b2dfe0f8a41e598e1b69d737633f1",
+          "status": "published",
+          "recommended": true
+        }
+      ]
+    },
+    {
+      "slug": "mz28-ai-ppd-v12",
+      "model": "MZ28-AI-PPD V1.2",
+      "chip": "ESP32-C3",
+      "releases": [
+        {
+          "version": "mz28-ai-app-v1.0.0 · xiaotai-esp32",
+          "bin_url": "./firmware/5b867f598b5898e522fb1936f19434ea8e76d7aecf6434112e0b33032e919687.bin",
+          "sha256": "5b867f598b5898e522fb1936f19434ea8e76d7aecf6434112e0b33032e919687",
+          "status": "published",
+          "recommended": true
+        }
+      ]
+    }
+  ]
+}
