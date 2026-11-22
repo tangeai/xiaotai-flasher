@@ -11,25 +11,41 @@
 
 官网可将 `dist/` 挂载到 `/web-flasher/`，并将 `/web-flasher` 跳转到带尾部斜杠的路径，保留查询参数。发布使用 HTTPS。
 
-### 发布脚本
+### 首次安装
 
-在装有 Bash、Node.js、npm 和 tar 的机器上，执行以下命令生成静态发布包：
+准备 Bash、Git、Node.js、npm、tar 和 flock。在目标服务器上运行：
+
+```bash
+curl -fsSLo /tmp/xiaotai-flasher-install.sh \
+  https://raw.githubusercontent.com/tangeai/xiaotai-flasher/main/scripts/install.sh
+bash -n /tmp/xiaotai-flasher-install.sh
+sudo env BOARDS_URL=https://firmware.example.com/xiaotai/boards.json \
+  bash /tmp/xiaotai-flasher-install.sh
+```
+
+安装器默认将 `main` 克隆到 `/opt/xiaotai-flasher/xiaotai-flasher`，首次发布到 `/opt/xiaotai-flasher/www/web-flasher`。可通过 `DEPLOY_ROOT`、`REPO_URL` 和 `REPO_BRANCH` 覆盖目录、源仓库和初始分支。Node.js 和 npm 需要在实际执行安装的用户环境中可用。
+
+将 [Nginx 路由示例](deploy/nginx/xiaotai-flasher.conf) 加入现有 HTTPS 站点的 `server` 块。自定义安装目录时同步修改 `alias`。配置检查通过后重新加载 Nginx。
+
+### 更新与回滚
+
+```bash
+sudo /opt/xiaotai-flasher/deploy-prod.sh update
+/opt/xiaotai-flasher/deploy-prod.sh status
+sudo /opt/xiaotai-flasher/deploy-prod.sh rollback xiaotai-flasher-20261122T043106Z-Qw5qba
+```
+
+`update` 快进拉取安装时选定的分支，构建成功后原子切换静态目录。相同提交和板卡目录配置会跳过重建。需要重建时用 `sudo env FORCE_UPDATE=1 /opt/xiaotai-flasher/deploy-prod.sh update`。回滚命令中的版本名用 `status` 列出的实际名称替换。
+
+服务器上的 `/opt/xiaotai-flasher/boards-source.json` 由首次安装写入。更新代码时保留该文件。更换板卡目录链接后再次运行 `update`。
+
+### 单独打包
 
 ```bash
 ./scripts/release.sh --boards-url https://firmware.example.com/xiaotai/boards.json
 ```
 
-脚本默认安装锁定的依赖并构建，将 `.tar.gz` 写入 `releases/`。可用 `--output-dir` 指定输出目录。省略 `--boards-url` 时，使用仓库里的 `public/boards-source.json`。命令行指定的链接只写入发布包。已安装依赖时可传 `--skip-install`。
-
-在静态站点所在机器上，可以生成发布包并切换部署目录：
-
-```bash
-./scripts/release.sh \
-  --boards-url https://firmware.example.com/xiaotai/boards.json \
-  --deploy-dir /var/www/xiaotai/web-flasher
-```
-
-将网站的 `/web-flasher/` 指向该部署路径。首次发布时使用尚未占用的路径，脚本会建立指向版本目录的符号链接，后续发布原子切换该链接。已有独立静态发布流程的站点，可把压缩包解压到该流程使用的目录。
+脚本将静态压缩包写入 `releases/`，可用 `--output-dir` 指定输出目录。省略 `--boards-url` 使用源码中的 `public/boards-source.json`。有可用依赖时可传 `--skip-install`。在当前服务器手动发布可传 `--deploy-dir`，首次选择空闲路径，后续原子切换发布链接。
 
 ## 配置板卡目录链接
 

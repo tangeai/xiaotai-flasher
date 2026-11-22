@@ -53,6 +53,10 @@ site_dir="$work_dir/site"
 release_name="xiaotai-flasher-$(date -u +%Y%m%dT%H%M%SZ)-${work_dir##*.}"
 
 cd -- "$repo_dir"
+source_commit=''
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1 && [[ -z "$(git status --porcelain)" ]]; then
+  source_commit="$(git rev-parse HEAD)"
+fi
 if ! "$skip_install"; then
   npm ci
 fi
@@ -79,6 +83,10 @@ if (!resolved || resolved.protocol !== 'https:' || resolved.username || resolved
 if (override) writeFileSync(path, JSON.stringify({ ...config, boards_url: override }, null, 2) + '\n');
 NODE
 
+if [[ -n "$source_commit" ]]; then
+  printf '{"commit":"%s"}\n' "$source_commit" >"$site_dir/release-info.json"
+fi
+
 mkdir -p -- "$output_dir"
 archive="$output_dir/$release_name.tar.gz"
 temporary_archive="$output_dir/.$release_name.tar.gz"
@@ -90,55 +98,5 @@ mv -- "$temporary_archive" "$archive"
 printf 'Release archive: %s\n' "$archive"
 
 if [[ -n "$deploy_dir" ]]; then
-  node --input-type=module - "$deploy_dir" "$release_name" "$site_dir" <<'NODE'
-import {
-  chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync,
-  readlinkSync, realpathSync, renameSync, rmSync, symlinkSync,
-} from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
-
-const [path, releaseName, source] = process.argv.slice(2);
-const destination = resolve(path);
-if (dirname(destination) === destination) throw new Error('The filesystem root cannot be a deployment path.');
-
-mkdirSync(dirname(destination), { recursive: true });
-const parent = realpathSync(dirname(destination));
-const name = basename(destination);
-const target = join(parent, name);
-const versions = join(parent, '.' + name + '-releases');
-const existing = lstatSync(target, { throwIfNoEntry: false });
-let previous;
-if (existing) {
-  if (!existing.isSymbolicLink()) throw new Error('Deployment path already exists as a file or directory. Choose a new path for the release link.');
-  previous = resolve(parent, readlinkSync(target));
-  if (dirname(previous) !== versions || !lstatSync(previous, { throwIfNoEntry: false })?.isDirectory()) {
-    throw new Error('Deployment path is not a release link managed by this script.');
-  }
-}
-
-mkdirSync(versions, { recursive: true });
-if (!lstatSync(versions).isDirectory()) throw new Error('The release storage path must be a directory.');
-const candidate = join(versions, releaseName);
-const temporary = mkdtempSync(join(parent, '.' + name + '-switch-'));
-const link = join(temporary, 'next');
-let installed = false;
-let created = false;
-try {
-  mkdirSync(candidate);
-  created = true;
-  chmodSync(candidate, 0o755);
-  if (previous && existsSync(join(previous, 'assets'))) {
-    cpSync(join(previous, 'assets'), join(candidate, 'assets'), { recursive: true });
-  }
-  cpSync(source, candidate, { recursive: true });
-  symlinkSync(join(basename(versions), releaseName), link);
-  renameSync(link, target);
-  installed = true;
-} finally {
-  rmSync(temporary, { recursive: true, force: true });
-  if (created && !installed) rmSync(candidate, { recursive: true, force: true });
-}
-console.log('Published: ' + target);
-if (previous) console.log('Previous release: ' + previous);
-NODE
+  node "$repo_dir/scripts/site-release.mjs" publish "$deploy_dir" "$release_name" "$site_dir"
 fi
