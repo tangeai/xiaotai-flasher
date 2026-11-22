@@ -184,6 +184,8 @@ curl -fsS https://xiaotai.chat/web-flasher/board-catalog/boards.json
 sudo /opt/xiaotai-flasher/deploy-prod.sh update
 ```
 
+`update` 在源码目录执行 `git pull --ff-only`。遇到 Git 报告 curl 28 或 56 时，脚本分别等待 2 秒和 4 秒再试，最多拉取三次。连续失败会在构建前退出，线上继续使用当前发布。手动 `git pull` 成功只代表源码已更新。若服务器还在用旧部署脚本，拉取新源码后在仓库目录运行 `bash scripts/install.sh`，即可刷新部署脚本并执行更新。
+
 仅固件更新时，沿用已选的目录维护方式。构建成功后 `update` 会切换前端版本。需要回滚前端时，用 `/opt/xiaotai-flasher/deploy-prod.sh status` 查看版本名，再运行 `sudo /opt/xiaotai-flasher/deploy-prod.sh rollback <版本名>`。
 
 如果 `catalog` 下载失败，先根据日志检查该 GitHub 地址，再重跑 `catalog`。Release 附件通常会跳转到 `release-assets.githubusercontent.com`，服务器也需要能访问该域名。首次上线可以先生成正式版目录，再加 `--include-prerelease` 更新测试版。脚本会重试临时网络错误，并复用已校验的 BIN。

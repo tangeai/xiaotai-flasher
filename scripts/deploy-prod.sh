@@ -62,7 +62,24 @@ if [[ "$command" == catalog ]]; then
 fi
 
 [[ -z "$(git -C "$repo" status --porcelain)" ]] || fail '生产源码目录有未提交修改，请先处理。'
-git -C "$repo" pull --ff-only
+pull_update() {
+  local attempt output status
+  for attempt in 1 2 3; do
+    if output="$(git -C "$repo" pull --ff-only 2>&1)"; then
+      printf '%s\n' "$output"
+      return 0
+    else
+      status=$?
+    fi
+    printf '%s\n' "$output" >&2
+    if [[ $attempt == 3 || ! "$output" =~ curl[[:space:]]+(28|56)([^0-9]|$) ]]; then
+      return "$status"
+    fi
+    log "GitHub 连接中断，即将重试（$((attempt + 1))/3）。"
+    sleep "$((attempt * 2))"
+  done
+}
+pull_update
 commit="$(git -C "$repo" rev-parse HEAD)"
 [[ "$commit" == "$(git -C "$repo" rev-parse '@{upstream}')" ]] || fail '生产源码提交与上游不一致。'
 boards_url="$(node --input-type=module - "$config" <<'NODE'

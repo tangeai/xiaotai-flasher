@@ -2,7 +2,7 @@
   "boards": [
     {
       "slug": "lckfb-esp32s3",
-      "model": "立创开发板-ESP32-S3",
+      "model": "立创实战派开发板 · ESP32-S3",
       "chip": "ESP32-S3",
       "releases": [
         {
@@ -28,7 +28,7 @@
     },
     {
       "slug": "m5stack-cores3-lite",
-      "model": "M5Stack开发板-ESP32-S3(CoreS3-Lite)",
+      "model": "M5Stack开发板 · ESP32-S3(CoreS3-Lite)",
       "chip": "ESP32-S3",
       "releases": [
         {
@@ -54,7 +54,7 @@
     },
     {
       "slug": "waveshare-esp32p4-touch-lcd-43c-v10",
-      "model": "微雪开发板-ESP32-P4（4.3寸屏）",
+      "model": "微雪开发板 · ESP32-P4（4.3寸屏）",
       "chip": "ESP32-P4",
       "releases": [
         {
@@ -68,7 +68,7 @@
     },
     {
       "slug": "waveshare-p4-rev3",
-      "model": "微雪开发板-ESP32-P4（3.5寸屏）",
+      "model": "微雪开发板 · ESP32-P4（3.5寸屏）",
       "chip": "ESP32-P4",
       "releases": [
         {
@@ -88,7 +88,7 @@
     },
     {
       "slug": "wt99p461-s1-1v1",
-      "model": "启明开发板-ESP32-P4",
+      "model": "启明开发板 · ESP32-P4",
       "chip": "ESP32-P4",
       "releases": [
         {
@@ -102,7 +102,7 @@
     },
     {
       "slug": "xmini-c3-v3",
-      "model": "Xmini-C3-V3 / ESP32-C3 / SSD1306 / ES8311 / 16 MB Flash",
+      "model": "Xmini-C3-V3 · ESP32-C3",
       "chip": "ESP32-C3",
       "releases": [
         {
@@ -130,7 +130,7 @@
     },
     {
       "slug": "lckfb-bk7258",
-      "model": "立创·实战派 BK7258",
+      "model": "立创实战派开发板 · BK7258",
       "chip": "BK7258",
       "releases": [
         {
@@ -159,7 +159,7 @@
     },
     {
       "slug": "mgkfb-bk7258",
-      "model": "觅感 AI 玩具开发板-BK7258（双屏眼睛）",
+      "model": "觅感 AI 玩具开发板 · BK7258（双屏眼睛）",
       "chip": "BK7258",
       "releases": [
         {
