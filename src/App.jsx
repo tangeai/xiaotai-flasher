@@ -623,8 +623,8 @@ function HelpDialog({ dialogRef, onClose }) {
           115200。
         </p>
         <p className="actions">
-          BK7258 使用下载串口 UART0。点击「连接设备」后自动尝试 RTS
-          复位。如未连接，请按芯片复位键或保持串口连接并重新给板供电。
+          BK7258 请选择 DL_UART0。看到「等待下载握手」时，在 15 秒内按一下板上的 RESET 键。
+          若已显示「下载串口已就绪」，可直接开始烧录。
         </p>
       </details>
       <details className="settings-group">
@@ -873,6 +873,7 @@ export function App() {
   }
 
   const completed = progress?.outcome === 'success';
+  const showResetHint = bk && !device && !busy && !completed;
   return (
     <>
       <header className="app-header">
@@ -952,6 +953,7 @@ export function App() {
                 className="btn primary"
                 type="button"
                 disabled={busy || !serialAvailable}
+                aria-describedby={showResetHint ? 'bk-reset-hint' : undefined}
                 onClick={() => connectDevice(canReconnect)}
               >
                 {canReconnect ? '重新连接' : '连接设备'}
@@ -967,6 +969,11 @@ export function App() {
                 </button>
               )}
             </>
+          )}
+          {showResetHint && (
+            <p id="bk-reset-hint" className="reset-hint">
+              选择 DL_UART0，看到「等待下载握手」时按一下 <kbd>RESET</kbd>。已自动连接可跳过。
+            </p>
           )}
         </section>
         <div className="workbench">

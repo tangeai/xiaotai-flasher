@@ -38,8 +38,11 @@ function device({
   ackOnly = false,
   bufferSwitch = false,
   ignoreSwitch = false,
+  changedFlashOnFallback = false,
   gd25wq64e = false,
   dropWriteReply = false,
+  firstStatusTimeout = false,
+  lostRestoreReply,
   bufferReset = false,
   loseFirstWriteAck = null,
   assertRtsOnReopen = false,
@@ -53,6 +56,7 @@ function device({
   let pendingReset;
   let resetHeld = false;
   let lostWriteAck = false;
+  let statusTimedOut = false;
   const storage = Buffer.alloc(capacity, 0x5a);
   const status = [0x1c, 0x40];
   const operations = [];
@@ -158,6 +162,7 @@ function device({
               return;
             }
             if (opcode === 0x03) {
+              if (statusTimedOut && firstStatusTimeout === 'offline') return;
               const register = frame.readUInt32LE(5);
               const reply = Buffer.alloc(8);
               reply.writeUInt32LE(register, 0);
@@ -196,10 +201,18 @@ function device({
               return extended(opcode, [
                 0x9f,
                 0xc8,
-                gd25wq64e ? 0x65 : 0x40,
+                gd25wq64e || (changedFlashOnFallback && openRates.length === 3) ? 0x65 : 0x40,
                 0x17,
               ]);
             case 0x0c:
+              if (lostRestoreReply === 'read' && operations.includes('write') && !statusTimedOut) {
+                statusTimedOut = true;
+                return;
+              }
+              if (firstStatusTimeout && (!statusTimedOut || firstStatusTimeout === 'persistent')) {
+                statusTimedOut = true;
+                return;
+              }
               return extended(opcode, [
                 payload[0],
                 status[payload[0] === 0x05 ? 0 : 1],
@@ -212,7 +225,9 @@ function device({
                   'GD25WQ64E writes each status register separately',
                 );
               statusWrites.push(payload[0]);
+              if (lostRestoreReply === 'not-applied' && statusWrites.length === 3) return;
               status[payload[0] === 0x01 ? 0 : 1] = payload[1];
+              if (lostRestoreReply === 'write' && statusWrites.length === 3) return;
               return extended(opcode, payload);
             case 0x0f:
             case 0x0b: {
@@ -397,23 +412,35 @@ test('BK7258 drains the queued 2 Mbps switch command before closing the old port
   }
 });
 
-test('BK7258 diagnoses a target still at 115200 after the high-speed port receives no data', async () => {
+test('BK7258 finishes at 115200 when the target ignores a high-speed switch', async () => {
   const serial = device({ ignoreSwitch: true });
   const log = [];
   const session = await connectBk7258(serial, {}, (line) => log.push(line));
   try {
-    await assert.rejects(
-      session.write(
-        [{ address: 0, data: imageFixture() }],
-        { baudrate: 2000000 },
-        () => {},
-      ),
-      /无法确认 2000000 波特率/,
-    );
+    const data = imageFixture();
+    await session.write([{ address: 0, data }], { baudrate: 2000000 }, () => {});
     assert.deepEqual(serial.openRates, [115200, 2000000, 115200]);
-    assert.deepEqual(serial.operations, ['set-baud']);
+    assert.deepEqual(serial.storage.subarray(0, data.length), data);
+    assert.deepEqual(serial.status, [0x1c, 0x40]);
     assert.match(log.join(''), /切速后串口收到 0 字节/);
     assert.match(log.join(''), /仍能在 115200 读到相同芯片 ID/);
+  } finally {
+    await session.close();
+  }
+});
+
+test('BK7258 stops before erase if the fallback Flash ID differs', async () => {
+  const serial = device({ ignoreSwitch: true, changedFlashOnFallback: true });
+  const log = [];
+  const session = await connectBk7258(serial, {}, (line) => log.push(line));
+  try {
+    await assert.rejects(
+      session.write([{ address: 0, data: imageFixture() }], { baudrate: 2000000 }, () => {}),
+      /无法确认 2000000 波特率/,
+    );
+    assert.match(log.join(''), /Flash JEDEC 与连接时不匹配/);
+    assert.deepEqual(serial.statusWrites, []);
+    assert.deepEqual(serial.erases, []);
   } finally {
     await session.close();
   }
@@ -501,4 +528,51 @@ test('BK7258 releases RTS after Windows reopens the port at 2 Mbps', async () =>
   } finally {
     await session.close();
   }
+});
+
+test('BK7258 handles a silent first SR1 read before allowing erase', async () => {
+  await Promise.all(['lost-reply', 'offline', 'persistent'].map(async (mode) => {
+    const serial = device({ gd25wq64e: true, firstStatusTimeout: mode });
+    const session = await connectBk7258(serial, {}, () => {});
+    try {
+      const data = imageFixture();
+      const write = session.write([{ address: 0, data }], {}, () => {});
+      if (mode !== 'lost-reply') {
+        const message = mode === 'offline'
+          ? /SPI 0x05.*收到 0 字节.*芯片 ID.*重新连接/s
+          : /SPI 0x05.*收到 0 字节/;
+        await assert.rejects(write, message);
+        assert.deepEqual(serial.erases, []);
+        assert.deepEqual(serial.statusWrites, []);
+      } else {
+        await write;
+        assert.deepEqual(serial.storage.subarray(0, data.length), data);
+        assert.deepEqual(serial.status, [0x1c, 0x40]);
+      }
+    } finally {
+      await session.close();
+    }
+  }));
+});
+
+test('BK7258 restores both protection registers after a lost cleanup reply', async () => {
+  await Promise.all(['read', 'write', 'not-applied'].map(async (lostRestoreReply) => {
+    const serial = device({ gd25wq64e: true, lostRestoreReply });
+    const session = await connectBk7258(serial, {}, () => {});
+    try {
+      const data = imageFixture();
+      const write = session.write([{ address: 0, data }], {}, () => {});
+      if (lostRestoreReply === 'not-applied') {
+        await assert.rejects(write, /CRC 校验通过，恢复 Flash 写保护失败/);
+        assert.deepEqual(serial.status, [0, 0]);
+        return;
+      }
+      await write;
+      assert.deepEqual(serial.status, [0x1c, 0x40]);
+      assert.deepEqual(serial.statusWrites, [0x01, 0x31, 0x01, 0x31]);
+      assert.deepEqual(serial.storage.subarray(0, data.length), data);
+    } finally {
+      await session.close();
+    }
+  }));
 });

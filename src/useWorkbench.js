@@ -162,9 +162,7 @@ export function useWorkbench() {
         const bk = options.platform === 'bk7258';
         flashStatus(
           bk
-            ? options.before === 'manual'
-              ? '等待 BK7258 下载握手，请手动复位。'
-              : '正在连接 BK7258 下载串口并尝试自动复位…'
+            ? '正在打开 DL_UART0，请留意烧录过程中的握手提示。'
             : '正在连接并识别 ESP32…',
         );
         if (bk) setTab('flash');
@@ -255,8 +253,8 @@ export function useWorkbench() {
           0,
         );
         let written = 0;
+        let writeStarted = false;
         try {
-          await releaseMonitor();
           abort.signal.throwIfAborted();
           const images =
             firmware.kind === 'official'
@@ -282,6 +280,10 @@ export function useWorkbench() {
                   : '')
               : firmware.entries.map(({ name }) => name).join('、');
           appendLog('flashLog', `选定固件：${label}\n`);
+          await releaseMonitor();
+          abort.signal.throwIfAborted();
+          progress('固件已就绪，正在准备擦写', 0);
+          writeStarted = true;
           await session.write(
             images,
             { ...options.flash, complete },
@@ -299,9 +301,13 @@ export function useWorkbench() {
           abort.signal.throwIfAborted();
         } catch (error) {
           const failure = abort.signal.reason ?? error;
-          progress('烧录失败', written, 'failed');
+          progress(writeStarted ? '烧录失败' : '固件准备中断', written, 'failed');
           setTab('flash');
           appendLog('flashLog', '\n' + failure.message + '\n');
+          if (!writeStarted && flash.current === active && !abort.signal.aborted) {
+            appendLog('flashLog', '尚未开始擦写，串口仍已连接。可重新选择固件或再次开始烧录。\n');
+            return;
+          }
           if (flash.current === active) {
             retryPort.current = port;
             update({ canReconnect: true });

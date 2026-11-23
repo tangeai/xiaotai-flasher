@@ -312,7 +312,7 @@ async function readStatus(commands) {
   return values;
 }
 
-async function setStatus(commands, current, target, separate) {
+async function setStatus(commands, current, target, separate, readCurrentStatus) {
   const wanted = current.map((value, index) => {
     const mask = protectionMasks[index];
     return (value & ~mask) | (target[index] & mask);
@@ -324,16 +324,25 @@ async function setStatus(commands, current, target, separate) {
       )
     : [[0x01, ...wanted]];
   for (const [opcode, ...bytes] of writes) {
-    const ack = await flashCommand(
-      commands,
-      0x0d,
-      [opcode, ...bytes],
-      `写入 Flash 状态寄存器（SPI 0x${opcode.toString(16).padStart(2, '0')}）`,
-    );
-    if (ack[0] !== opcode) throw new Error('BK7258 Flash 状态写入响应无效。');
+    try {
+      const ack = await flashCommand(
+        commands,
+        0x0d,
+        [opcode, ...bytes],
+        `写入 Flash 状态寄存器（SPI 0x${opcode.toString(16).padStart(2, '0')}）`,
+      );
+      if (ack[0] !== opcode) throw new Error('BK7258 Flash 状态写入响应无效。');
+    } catch (error) {
+      if (!(error.cause instanceof ReplyTimeout)) throw error;
+      // A write may have finished even when its acknowledgement was lost.
+      const actual = await readCurrentStatus();
+      const start = opcode === 0x31 ? 1 : 0;
+      if (bytes.some((value, i) => (actual[start + i] ^ value) & protectionMasks[start + i]))
+        throw error;
+    }
     await wait(15);
   }
-  const actual = await readStatus(commands);
+  const actual = await readCurrentStatus();
   if (
     actual.some(
       (value, index) =>
@@ -520,9 +529,8 @@ export async function connectBk7258(port, settings = {}, print) {
     }
     const autoReset = settings.before !== 'manual';
     print(
-      '等待 DL_UART0 下载握手。' +
-        (autoReset ? '正在尝试 RTS 自动复位。如未连接，' : '') +
-        '请在 15 秒内按芯片复位键，或保持 USB 串口连线并重新给板供电。\n',
+      '等待下载握手（DL_UART0）。请在 15 秒内按一下板上的 RESET 键。' +
+        (autoReset ? '如已通过 RTS 自动连接，可跳过此步。' : '') + '\n',
     );
     await bootLink(commands, port, print, autoReset);
     const version = await readRegister(commands, 0x44010004);
@@ -536,19 +544,43 @@ export async function connectBk7258(port, settings = {}, print) {
     )
       throw new Error('当前设备的芯片标识不在 BK7258 支持范围内。');
 
-    const identification = await flashCommand(
-      commands,
-      0x0e,
-      [0x9f, 0, 0, 0],
-      '读取 Flash JEDEC',
-    );
-    const mid = identification.length >= 4 ? readWord(identification) >>> 8 : 0;
+    async function readFlashId() {
+      const identification = await flashCommand(
+        commands,
+        0x0e,
+        [0x9f, 0, 0, 0],
+        '读取 Flash JEDEC',
+      );
+      return identification.length >= 4 ? readWord(identification) >>> 8 : 0;
+    }
+    const mid = await readFlashId();
     if (!flashProfiles.has(mid))
       throw new Error(
         `暂不支持此 BK7258 的 Flash 型号（JEDEC 0x${mid.toString(16)}）。`,
       );
     const capacity = 2 ** (mid >>> 16);
     print(`BK7258 下载串口已就绪，Flash JEDEC 0x${mid.toString(16)}。\n`);
+    async function readCurrentStatus() {
+      try {
+        return await readStatus(commands);
+      } catch (error) {
+        if (!(error.cause instanceof ReplyTimeout)) throw error;
+        print(`${error.message} 正在以 ${currentBaud} 波特率回读芯片 ID。\n`);
+        let actual;
+        try {
+          actual = await readRegister(commands, 0x44010004, 1000);
+        } catch (probeError) {
+          throw new Error(
+            `${error.message} 回读芯片 ID 也失败：${probeError.message} 请重新连接 DL_UART0 后重试。`,
+            { cause: probeError },
+          );
+        }
+        if (actual !== version)
+          throw new Error('回读的 BK7258 芯片 ID 与连接时不一致，请重新连接。');
+        print('芯片 ID 已确认，重试读取 Flash 状态寄存器。\n');
+        return readStatus(commands);
+      }
+    }
     async function setWriteBaud(baudrate) {
       if (!bkWriteRates.includes(baudrate))
         throw new Error('请选择有效的 BK7258 烧录波特率。');
@@ -596,7 +628,10 @@ export async function connectBk7258(port, settings = {}, print) {
               await probeBootrom(commands, 350);
               if ((await readRegister(commands, 0x44010004, 350)) !== version)
                 throw new Error('芯片 ID 不匹配。');
-              print(`回到原速率后仍能在 ${currentBaud} 读到相同芯片 ID。\n`);
+              if ((await readFlashId()) !== mid)
+                throw new Error('Flash JEDEC 与连接时不匹配。');
+              print(`回到原速率后仍能在 ${currentBaud} 读到相同芯片 ID 和 Flash JEDEC，将按此速率继续烧录。\n`);
+              return;
             } catch (probeError) {
               print(
                 `原速率 ${currentBaud} 回探也未确认通信：${probeError.message}\n`,
@@ -636,7 +671,7 @@ export async function connectBk7258(port, settings = {}, print) {
         validateBk7258Image(image.data);
         await setWriteBaud(baudrate);
         const separate = flashProfiles.get(mid);
-        const original = await readStatus(commands);
+        const original = await readCurrentStatus();
         const sr = original.map(
           (value) => '0x' + value.toString(16).padStart(2, '0'),
         );
@@ -645,7 +680,7 @@ export async function connectBk7258(port, settings = {}, print) {
         );
         let failed;
         try {
-          await setStatus(commands, original, [0, 0], separate);
+          await setStatus(commands, original, [0, 0], separate, readCurrentStatus);
           print('Flash 写保护检查完成，开始擦写地址 0x0。\n');
           await program(commands, image.data, progress, print);
         } catch (error) {
@@ -655,13 +690,15 @@ export async function connectBk7258(port, settings = {}, print) {
           try {
             await setStatus(
               commands,
-              await readStatus(commands),
+              await readCurrentStatus(),
               original,
               separate,
+              readCurrentStatus,
             );
           } catch (error) {
             print(`恢复 Flash 保护失败：${error.message}\n`);
-            if (!failed) throw error;
+            if (!failed)
+              throw new Error(`固件 CRC 校验通过，恢复 Flash 写保护失败：${error.message}`, { cause: error });
           }
         }
         print('BK7258 写入及 CRC 校验通过。\n');

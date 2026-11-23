@@ -185,6 +185,20 @@ input:where([type='checkbox'], [type='radio']) {
   border-radius: 8px;
   background: #fff;
 }
+.reset-hint {
+  flex-basis: 100%;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.reset-hint kbd {
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--ink);
+}
 .device-status {
   flex: 1;
   font-size: 0.88rem;
@@ -529,6 +543,15 @@ dialog p {
   pre {
     min-height: 240px;
     max-height: 55vh;
+  }
+}
+@media (max-width: 540px) {
+  .device-bar > label {
+    flex-basis: 100%;
+  }
+  .device-bar select {
+    min-width: 0;
+    flex: 1;
   }
 }
 @media (max-width: 420px) {
