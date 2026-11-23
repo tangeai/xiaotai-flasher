@@ -1,5 +1,6 @@
 import { previewOffset, timestampedPreview } from './serial-preview.mjs';
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { SplitWorkbench } from './SplitWorkbench.jsx';
 import brandMark from './assets/xiaotai-brand-mark.png';
 import { canonicalBoardSlug, loadBoards } from './catalog.mjs';
 import { prepareFirmware } from './firmware.mjs';
@@ -315,7 +316,8 @@ const SerialLog = memo(function SerialLog({ text, matchStart, matchLength }) {
   return <>{parts}{section(offset, text.length)}</>;
 });
 
-function CommandForm({ workbench }) {
+function CommandForm({ workbench, platform }) {
+  const disabled = !workbench.canSend || workbench.busy || workbench.sending || workbench.testingAt;
   const browsing = useRef(null);
   const [format, setFormat] = useState('text');
   const [drafts, setDrafts] = useState({ text: '', hex: '' });
@@ -373,9 +375,13 @@ function CommandForm({ workbench }) {
         <option value={'\r'}>CR</option>
         <option value="">无行尾</option>
       </select>}
-      <button className="btn primary" type="submit" disabled={!workbench.canSend || workbench.busy || workbench.sending || !command}>
+      <button className="btn primary" type="submit" disabled={disabled || !command}>
         发送指令
       </button>
+      {platform === 'esp32' && workbench.monitoring && (
+        <button className="btn" type="button" onClick={workbench.testAt} disabled={disabled}
+          title="发送 AT 加回车，等待设备回复">测试 AT</button>
+      )}
     </form>
   );
 }
@@ -411,7 +417,7 @@ function LogConsole({ workbench, rate, setRate, platform }) {
   const nextMatch = matches.findIndex(position => displayedOffset + position >= matchAnchor);
   const selected = nextMatch < 0 ? matches.length - 1 : nextMatch;
   const matchStart = matches[selected] ?? -1;
-  const [copyStatus, setCopyStatus] = useState('');
+  const [flashCopyStatus, setFlashCopyStatus] = useState('');
   const deviceOutput = useRef(null);
   const flashOutput = useRef(null);
   const deviceTab = useRef(null);
@@ -467,11 +473,12 @@ function LogConsole({ workbench, rate, setRate, platform }) {
   }
 
   async function copyLog(text) {
+    const report = flashTab ? setFlashCopyStatus : workbench.monitorStatus;
     try {
       await navigator.clipboard.writeText(text);
-      setCopyStatus('已复制日志。');
+      report('已复制日志。');
     } catch {
-      setCopyStatus('复制失败。可选中日志后手动复制。');
+      report('复制失败。可选中日志后手动复制。');
     }
   }
 
@@ -546,40 +553,44 @@ function LogConsole({ workbench, rate, setRate, platform }) {
         }}
       >
         <div className="row spread log-controls">
-          <button
-            className="btn primary"
-            type="button"
-            disabled={!serialAvailable || busy}
-            onClick={() => workbench.toggleMonitor(rate, platform)}
-          >
-            {monitoring ? '断开日志串口' : '连接日志串口'}
-          </button>
-          <label className="row">
-            日志波特率
-            <select
-              value={rate}
-              onChange={(event) => setRate(event.target.value)}
-              disabled={monitoring || busy}
-              aria-describedby="log-rate-help"
+          <div className="row">
+            <button
+              className="btn primary"
+              type="button"
+              disabled={!serialAvailable || busy}
+              onClick={() => workbench.toggleMonitor(rate, platform)}
             >
-              {logRates.map((baud) => (
-                <option key={baud}>{baud}</option>
-              ))}
-            </select>
-          </label>
-          <Check checked={showTime} onChange={(event) => { setMatchAnchor(0); setShowTime(event.target.checked); }}>
-            时间
-          </Check>
-          <Check checked={!paused && !finding} disabled={finding} onChange={(event) => setPaused(!event.target.checked)}>
-            自动滚动
-          </Check>
-          <button type="button" className="btn find-toggle" ref={findButton} aria-label="查找日志"
-            title="查找日志 (Ctrl / ⌘ + F)" aria-expanded={finding}
-            onClick={() => finding ? closeFind() : setFinding(true)}>
-            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-              <circle cx="8" cy="8" r="5.5" /><path d="m12 12 5 5" />
-            </svg>
-          </button>
+              {monitoring ? '断开日志串口' : '连接日志串口'}
+            </button>
+            <label className="row">
+              日志波特率
+              <select
+                value={rate}
+                onChange={(event) => setRate(event.target.value)}
+                disabled={monitoring || busy}
+                aria-describedby="log-rate-help"
+              >
+                {logRates.map((baud) => (
+                  <option key={baud}>{baud}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="row log-view-controls">
+            <Check checked={showTime} onChange={(event) => { setMatchAnchor(0); setShowTime(event.target.checked); }}>
+              时间
+            </Check>
+            <Check checked={!paused && !finding} disabled={finding} onChange={(event) => setPaused(!event.target.checked)}>
+              自动滚动
+            </Check>
+            <button type="button" className="btn find-toggle" ref={findButton} aria-label="查找日志"
+              title="查找日志 (Ctrl / ⌘ + F)" aria-expanded={finding}
+              onClick={() => finding ? closeFind() : setFinding(true)}>
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <circle cx="8" cy="8" r="5.5" /><path d="m12 12 5 5" />
+              </svg>
+            </button>
+          </div>
           <small className="sr-only" id="log-rate-help">
             UART 读取速率需与固件控制台配置一致。原生 USB 日志请按板卡说明连接。
           </small>
@@ -608,46 +619,45 @@ function LogConsole({ workbench, rate, setRate, platform }) {
         >
           {bootLog ? <SerialLog text={bootLog} matchStart={matchStart} matchLength={query.length} /> : (monitoring ? '等待设备日志…' : '连接后显示设备日志。')}
         </pre>
-        <CommandForm workbench={workbench} />
-        {workbench.commandMessage && <small role="status">{workbench.commandMessage}</small>}
-        <div className="row log-actions">
-          <button
-            className="btn"
-            type="button"
-            disabled={!bootLog}
-            onClick={() => { setMatchAnchor(0); workbench.clearLog(); }}
-          >
-            清空日志
-          </button>
-          <button
-            className="btn"
-            type="button"
-            disabled={!bootLog}
-            onClick={() => copyLog(bootLog)}
-          >
-            复制日志
-          </button>
-          <button
-            className="btn"
-            type="button"
-            disabled={!bootLog}
-            onClick={downloadLog}
-          >
-            下载日志
-          </button>
-          {typeof window.showDirectoryPicker === 'function' && (
+        <div className="console-bottom">
+          <CommandForm workbench={workbench} platform={platform} />
+          <div className="row log-actions">
             <button
               className="btn"
               type="button"
-              disabled={!monitoring || busy}
-              onClick={workbench.toggleRecording}
+              disabled={!bootLog}
+              onClick={() => copyLog(bootLog)}
             >
-              {workbench.recording ? '停止记录' : '记录到文件夹'}
+              复制日志
             </button>
-          )}
+            <button
+              className="btn"
+              type="button"
+              disabled={!bootLog}
+              onClick={downloadLog}
+            >
+              下载日志
+            </button>
+            {typeof window.showDirectoryPicker === 'function' && (
+              <button
+                className="btn"
+                type="button"
+                disabled={!monitoring || busy}
+                onClick={workbench.toggleRecording}
+              >
+                {workbench.recording ? '停止记录' : '记录到文件夹'}
+              </button>
+            )}
+            <button
+              className="btn"
+              type="button"
+              disabled={!bootLog}
+              onClick={() => { setMatchAnchor(0); workbench.clearLog(); }}
+            >
+              清空日志
+            </button>
+          </div>
         </div>
-        <small role="status">{monitorMessage}</small>
-        {workbench.recordingMessage && <small role="status">{workbench.recordingMessage}</small>}
         {complete && (
           <p id="monitor-setup" className="callout">
             完整镜像已写入。请重新配置设备 Wi‑Fi，再到
@@ -681,7 +691,9 @@ function LogConsole({ workbench, rate, setRate, platform }) {
           </button>
         </div>
       </div>
-      <small role="status">{copyStatus}</small>
+      <small className="console-notice" role="status" title={flashTab ? flashCopyStatus : monitorMessage}>
+        {flashTab ? flashCopyStatus : monitorMessage}
+      </small>
     </section>
   );
 }
@@ -1151,8 +1163,8 @@ export function App() {
             </p>
           )}
         </section>
-        <div className="workbench">
-          <section className="flash-panel" aria-labelledby="firmware-title">
+        <SplitWorkbench>
+          <section id="firmware-panel" className="flash-panel" aria-labelledby="firmware-title">
             <div className="flash-settings">
               <FirmwarePicker
                 key={platform}
@@ -1242,7 +1254,7 @@ export function App() {
             </section>
           </section>
           <LogConsole workbench={workbench} rate={rate} setRate={setRate} platform={platform} />
-        </div>
+        </SplitWorkbench>
       </main>
       <HelpDialog dialogRef={helpDialog} onClose={() => setHelpOpen(false)} />
       <dialog

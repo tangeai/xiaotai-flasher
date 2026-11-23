@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createSerialPreview } from './serial-preview.mjs';
-import { encodeSerialCommand } from './serial-command.mjs';
+import { createAtReplyReader, encodeSerialCommand } from './serial-command.mjs';
 import { startSerialRecording } from './serial-recording.mjs';
 import { downloadFirmware } from './catalog.mjs';
 import {
@@ -22,10 +22,9 @@ const initialState = {
   monitorMessage: '',
   canSend: false,
   sending: false,
-  commandMessage: '',
+  testingAt: false,
   commandHistory: [],
   recording: false,
-  recordingMessage: '',
   preview: { text: '', offset: 0, firstLine: 0, stamps: [] },
   flashLog: '',
   tab: 'log',
@@ -106,7 +105,7 @@ export function useWorkbench() {
     const saved = await recorder.stop();
     if (active.recorder === recorder) {
       active.recorder = null;
-      update(saved ? { recording: false, recordingMessage: '记录已结束。' } : { recording: false });
+      update(saved ? { recording: false, monitorMessage: '记录已结束。' } : { recording: false });
     }
   }
 
@@ -127,35 +126,53 @@ export function useWorkbench() {
       }
       if (monitor.current !== active || active.stopping) return;
       active.recorder = startSerialRecording(directory, (error) => {
-        update({ recordingMessage: '文件记录中断。' + error.message });
+        update({ monitorMessage: '文件记录中断。' + error.message });
         void stopRecording(active);
       });
-      update({ recording: true, recordingMessage: '正在记录到 ' + directory.name + '，每份约 10 MiB。' });
-    }, (recordingMessage) => update({ recordingMessage }));
+      update({ recording: true, monitorMessage: '正在记录到 ' + directory.name + '，每份约 10 MiB。' });
+    }, monitorStatus);
   }
 
-  async function sendCommand(command, format, ending) {
+  function finishAt(active, monitorMessage) {
+    clearTimeout(active.atTimer);
+    active.atReply = null;
+    update({ testingAt: false, monitorMessage });
+  }
+
+  async function sendCommand(command, format, ending, testAt = false) {
     const active = monitor.current;
-    if (!active || active.stopping || active.writer || busy.current || !command) return;
+    if (!active || active.stopping || active.writer || active.atReply || busy.current || !command) return;
+    if (testAt && active.platform !== 'esp32') return;
     let writer;
     try {
       const bytes = encodeSerialCommand(command, format, ending);
       writer = active.port.writable.getWriter();
       active.writer = writer;
-      update({ sending: true, commandMessage: '正在发送…' });
+      if (testAt) active.atReply = createAtReplyReader(active.atLineStart);
+      update({ sending: true, testingAt: testAt, monitorMessage: testAt ? '正在等待 AT 回包…' : '正在发送…' });
       await writer.write(bytes);
+      if (testAt) {
+        if (active.atReply && !active.stopping) {
+          active.atTimer = setTimeout(() => finishAt(active,
+            '3 秒内未收到 AT 回包。请核对主控制台接口、波特率和固件是否开放物理 AT。'), 3000);
+        }
+        return;
+      }
       if (!active.stopping) {
         const entry = { command, format, ending };
         setView(old => ({
           ...old,
-          commandMessage: '指令已发送。',
+          monitorMessage: '指令已发送。',
           commandHistory: [...old.commandHistory.filter(item =>
             item.command !== command || item.format !== format ||
             (format === 'text' && item.ending !== ending)), entry].slice(-50),
         }));
       }
     } catch (error) {
-      if (!active.stopping) update({ commandMessage: '发送失败。' + error.message });
+      if (!active.stopping) {
+        if (testAt) finishAt(active, 'AT 发送失败。' + error.message);
+        else update({ monitorMessage: '发送失败。' + error.message });
+      }
     } finally {
       writer?.releaseLock();
       active.writer = null;
@@ -173,6 +190,13 @@ export function useWorkbench() {
         if (done) break;
         if (value.length) clearTimeout(active.releaseTimer);
         const output = decoder.decode(value, { stream: true });
+        if (value.length) active.atLineStart = value.at(-1) === 10 || value.at(-1) === 13;
+        const reply = active.atReply?.(output);
+        if (reply === 'Unrecognized command') {
+          finishAt(active, '串口收发正常。当前控制台不识别 AT，可发送 help 查看支持的命令。');
+        } else if (reply) {
+          finishAt(active, reply === 'OK' ? '设备已响应 AT（OK）。' : '设备返回 ' + reply);
+        }
         if (output && !received) {
           received = true;
           update({ monitorReceived: true });
@@ -185,12 +209,16 @@ export function useWorkbench() {
     } finally {
       const requestedStop = active.stopping;
       active.stopping = true;
-      update({ canSend: false, commandMessage: '', commandHistory: [] });
+      const interrupted = Boolean(active.atReply);
+      clearTimeout(active.atTimer);
+      active.atReply = null;
+      update({ canSend: false, testingAt: false, commandHistory: [] });
       const cancelWrite = active.writer?.abort().catch(() => {});
       const tail = decoder.decode();
       queuePreview(tail);
       flushPreview();
       active.recorder?.append(tail);
+      const wasRecording = Boolean(active.recorder);
       const saved = stopRecording(active);
       clearTimeout(active.releaseTimer);
       await Promise.all([active.signalTask, cancelWrite]);
@@ -208,8 +236,9 @@ export function useWorkbench() {
         update({
           monitoring: false,
           monitorReceived: false,
-          monitorMessage:
-            message || (requestedStop ? '' : '串口已断开。请重新连接。'),
+          ...(message || interrupted || !requestedStop || !wasRecording ? {
+            monitorMessage: message || (interrupted ? '串口已断开，AT 测试中断。' : (requestedStop ? '日志串口已断开。' : '串口已断开。请重新连接。')),
+          } : {}),
         });
       }
     }
@@ -224,12 +253,12 @@ export function useWorkbench() {
       await port.close().catch(() => {});
       throw error;
     }
-    const active = { port, reader, stopping: false };
+    const active = { port, reader, platform, stopping: false, atLineStart: true };
     preview.current.beginSession();
     monitor.current = active;
     update({
-      monitoring: true, monitorReceived: false, monitorMessage: '', recordingMessage: '',
-      canSend: Boolean(port.writable), sending: false, commandMessage: '', commandHistory: [],
+      monitoring: true, monitorReceived: false, monitorMessage: '',
+      canSend: Boolean(port.writable), sending: false, commandHistory: [],
     });
     active.done = readMonitor(active);
     if (
@@ -490,12 +519,14 @@ export function useWorkbench() {
   return {
     ...view,
     serialAvailable: Boolean(serial),
+    monitorStatus,
     connect,
     disconnect,
     write,
     toggleMonitor,
     toggleRecording,
     sendCommand,
+    testAt: () => sendCommand('AT', 'text', '\r', true),
     setTab,
     showDeviceLog,
     resetForPlatform: () => {
@@ -507,7 +538,6 @@ export function useWorkbench() {
         progress: null,
         flashLog: '',
         monitorMessage: '',
-        recordingMessage: '',
       });
       flashStatus(initialState.deviceMessage);
     },

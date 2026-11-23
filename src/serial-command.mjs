@@ -9,3 +9,23 @@ export function encodeSerialCommand(command, format, ending) {
     throw new Error('指令格式或行尾无效。');
   return new TextEncoder().encode(command + ending);
 }
+
+// Ignore a line that was already underway when the probe was sent.
+export function createAtReplyReader(atLineStart) {
+  let line = '';
+  let skip = !atLineStart;
+  return chunk => {
+    let start = 0;
+    for (let i = 0; i <= chunk.length; i++) {
+      if (i < chunk.length && chunk[i] !== '\r' && chunk[i] !== '\n') continue;
+      if (line.length + i - start > 256) skip = true;
+      if (!skip) line += chunk.slice(start, i);
+      if (i === chunk.length) break;
+      if (!skip && (line === 'OK' || line === 'Unrecognized command' || /^ERROR(?::.*)?$/.test(line))) return line;
+      line = '';
+      skip = false;
+      start = i + 1;
+    }
+    return null;
+  };
+}

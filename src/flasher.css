@@ -207,9 +207,28 @@ input:where([type='checkbox'], [type='radio']) {
 .workbench {
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(320px, 42fr) minmax(0, 58fr);
-  gap: 14px;
+  grid-template-columns: var(--firmware-width) 14px minmax(0, 1fr);
   min-height: 0;
+}
+.panel-divider {
+  display: grid;
+  place-items: center;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+.panel-divider::after {
+  content: '';
+  width: 3px;
+  height: 38px;
+  border-radius: 3px;
+  background: #aab5c5;
+}
+.panel-divider:is(:hover, :focus-visible, :active)::after {
+  background: var(--accent);
+}
+.flash-panel {
+  container-type: inline-size;
 }
 .flash-panel,
 .console {
@@ -373,6 +392,18 @@ progress {
   padding: 12px;
   gap: 12px;
 }
+.console-notice,
+.console-notice:empty {
+  display: block;
+  flex: 0 0 auto;
+  height: 28px;
+  margin: 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .console-head {
   border-bottom: 1px solid var(--line);
 }
@@ -424,13 +455,23 @@ progress {
 }
 .log-controls {
   font-size: 0.88rem;
+  column-gap: 18px;
+}
+.log-view-controls {
+  gap: 12px;
+}
+.log-view-controls .check {
+  align-items: center;
+}
+.log-view-controls .check input {
+  margin: 0;
 }
 .find-toggle {
   display: inline-grid;
   place-items: center;
 }
 .log-find input {
-  flex: 1 1 9em;
+  flex: 0 1 32ch;
   min-width: 0;
 }
 .log-find small {
@@ -445,13 +486,27 @@ progress {
   color: #242d3c;
   background: #ebcb8b;
 }
+.console-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+.console-bottom .log-actions {
+  flex: none;
+  justify-content: flex-end;
+  padding-left: 16px;
+  border-left: 2px solid var(--line);
+}
 .command-row {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
 }
 .command-row input {
-  flex: 1 1 0;
+  width: 44ch;
+  flex: 0 1 44ch;
   font-family: ui-monospace, monospace;
   min-width: 0;
 }
@@ -461,7 +516,26 @@ progress {
 .command-row button {
   white-space: nowrap;
 }
+@container (max-width: 760px) {
+  .console-bottom {
+    display: grid;
+    justify-content: stretch;
+    gap: 8px;
+  }
+  .console-bottom .log-actions {
+    padding: 8px 0 0;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+}
 @container (max-width: 420px) {
+  .log-find input {
+    flex: 1 1 8ch;
+  }
+  .log-actions:has(button:nth-child(4)) {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+  }
   .command-row {
     flex-wrap: wrap;
   }
@@ -469,7 +543,7 @@ progress {
     order: -1;
     flex-basis: 100%;
   }
-  .command-row button {
+  .command-row button[type="submit"] {
     margin-left: auto;
   }
 }
@@ -598,6 +672,10 @@ dialog p {
   }
   .workbench {
     grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+  .panel-divider {
+    display: none;
   }
   .flash-settings {
     overflow: visible;
@@ -616,7 +694,7 @@ dialog p {
     flex: 1;
   }
 }
-@media (max-width: 420px) {
+@container (max-width: 420px) {
   .firmware-row,
   .options {
     grid-template-columns: 1fr;
