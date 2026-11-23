@@ -1,4 +1,5 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { previewOffset, timestampedPreview } from './serial-preview.mjs';
+import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import brandMark from './assets/xiaotai-brand-mark.png';
 import { canonicalBoardSlug, loadBoards } from './catalog.mjs';
 import { prepareFirmware } from './firmware.mjs';
@@ -294,19 +295,90 @@ const logLevels = {
   E: 'error', ERR: 'error', ERROR: 'error',
 };
 
-const SerialLog = memo(function SerialLog({ text }) {
+const SerialLog = memo(function SerialLog({ text, matchStart, matchLength }) {
   // Match level prefixes after an optional timestamp, including ESP-IDF's I (123) form.
-  const prefix = /^(?:\x1b\[[0-9;]*m)*(?:\[?\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\]?[ \t]+)?\[?(INFO|OK|SUCCESS|WARN(?:ING)?|ERR(?:OR)?|[IWE](?= \(\d+\)))\b/gm;
+  const prefix = /^(?:\[\d{2}:\d{2}:\d{2}\.\d{3}\] )?(?:\x1b\[[0-9;]*m)*(?:\[?\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\]?[ \t]+)?\[?(INFO|OK|SUCCESS|WARN(?:ING)?|ERR(?:OR)?|[IWE](?= \(\d+\)))\b/gm;
   const parts = [];
+  function section(start, end) {
+    const from = Math.max(start, matchStart);
+    const to = Math.min(end, matchStart + matchLength);
+    if (matchStart < 0 || from >= to) return text.slice(start, end);
+    return <Fragment key={'match' + start}>{text.slice(start, from)}<mark>{text.slice(from, to)}</mark>{text.slice(to, end)}</Fragment>;
+  }
   let offset = 0;
   for (const match of text.matchAll(prefix)) {
     const end = match.index + match[0].length;
-    parts.push(text.slice(offset, end - match[1].length));
-    parts.push(<span className={`log-${logLevels[match[1]]}`} key={end}>{match[1]}</span>);
+    parts.push(section(offset, end - match[1].length));
+    parts.push(<span className={`log-${logLevels[match[1]]}`} key={end}>{section(end - match[1].length, end)}</span>);
     offset = end;
   }
-  return <>{parts}{text.slice(offset)}</>;
+  return <>{parts}{section(offset, text.length)}</>;
 });
+
+function CommandForm({ workbench }) {
+  const browsing = useRef(null);
+  const [format, setFormat] = useState('text');
+  const [drafts, setDrafts] = useState({ text: '', hex: '' });
+  const command = drafts[format];
+  const [ending, setEnding] = useState('\r\n');
+
+  function recallCommand(event) {
+    const history = workbench.commandHistory;
+    if (event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+        !history.length || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    let cursor = browsing.current;
+    if (cursor?.history !== history) {
+      if (event.key === 'ArrowDown') return;
+      cursor = { history, index: history.length, drafts, format, ending };
+      browsing.current = cursor;
+    }
+    event.preventDefault();
+    cursor.index = Math.max(0, Math.min(history.length, cursor.index + (event.key === 'ArrowUp' ? -1 : 1)));
+    const entry = history[cursor.index];
+    if (entry) {
+      setFormat(entry.format);
+      setEnding(entry.ending);
+      setDrafts({ ...cursor.drafts, [entry.format]: entry.command });
+    } else {
+      setDrafts(cursor.drafts);
+      setFormat(cursor.format);
+      setEnding(cursor.ending);
+      browsing.current = null;
+    }
+  }
+
+  return (
+    <form aria-label="串口发送" className="command-row" onSubmit={(event) => {
+      event.preventDefault();
+      workbench.sendCommand(command, format, ending);
+    }}>
+      <select aria-label="发送格式" value={format} onChange={(event) => { browsing.current = null; setFormat(event.target.value); }}>
+        <option value="text">文本</option>
+        <option value="hex">HEX</option>
+      </select>
+      <input
+        type="text"
+        aria-label="串口指令"
+        placeholder={format === 'hex' ? '例如 AA 01 FF' : '输入串口指令'}
+        autoComplete="off"
+        spellCheck={false}
+        value={command}
+        title="↑ / ↓ 调出本次连接成功发送的指令"
+        onKeyDown={recallCommand}
+        onChange={(event) => { browsing.current = null; setDrafts({ ...drafts, [format]: event.target.value }); }}
+      />
+      {format === 'text' && <select aria-label="指令行尾" title="文本行尾" value={ending} onChange={(event) => { browsing.current = null; setEnding(event.target.value); }}>
+        <option value={'\r\n'}>CR+LF</option>
+        <option value={'\n'}>LF</option>
+        <option value={'\r'}>CR</option>
+        <option value="">无行尾</option>
+      </select>}
+      <button className="btn primary" type="submit" disabled={!workbench.canSend || workbench.busy || workbench.sending || !command}>
+        发送指令
+      </button>
+    </form>
+  );
+}
 
 function LogConsole({ workbench, rate, setRate, platform }) {
   const {
@@ -315,7 +387,7 @@ function LogConsole({ workbench, rate, setRate, platform }) {
     monitoring,
     monitorReceived,
     monitorMessage,
-    bootLog,
+    preview,
     flashLog,
     progress,
     complete,
@@ -323,19 +395,61 @@ function LogConsole({ workbench, rate, setRate, platform }) {
   } = workbench;
   const flashTab = tab === 'flash';
   const [paused, setPaused] = useState(false);
+  const [finding, setFinding] = useState(false);
+  const [query, setQuery] = useState('');
+  const [matchAnchor, setMatchAnchor] = useState(0);
+  const findField = useRef(null);
+  const findButton = useRef(null);
+  const [showTime, setShowTime] = useState(false);
+  const bootLog = useMemo(() => showTime ? timestampedPreview(preview) : preview.text, [preview, showTime]);
+  const matches = useMemo(() => {
+    if (!finding || !query) return [];
+    const literal = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return Array.from(bootLog.matchAll(new RegExp(literal, 'gi')), match => match.index);
+  }, [finding, query, bootLog]);
+  const displayedOffset = previewOffset(preview, showTime);
+  const nextMatch = matches.findIndex(position => displayedOffset + position >= matchAnchor);
+  const selected = nextMatch < 0 ? matches.length - 1 : nextMatch;
+  const matchStart = matches[selected] ?? -1;
   const [copyStatus, setCopyStatus] = useState('');
   const deviceOutput = useRef(null);
   const flashOutput = useRef(null);
   const deviceTab = useRef(null);
   const processTab = useRef(null);
   useLayoutEffect(() => {
-    if (!flashTab && !paused)
+    if (!flashTab && !paused && !finding)
       deviceOutput.current.scrollTop = deviceOutput.current.scrollHeight;
-  }, [bootLog, flashTab, paused]);
+  }, [bootLog, flashTab, paused, finding]);
   useLayoutEffect(() => {
     if (flashTab)
       flashOutput.current.scrollTop = flashOutput.current.scrollHeight;
   }, [flashLog, flashTab]);
+
+  useLayoutEffect(() => {
+    if (finding && !flashTab) findField.current?.focus();
+  }, [finding, flashTab]);
+  useLayoutEffect(() => {
+    if (flashTab || matchStart < 0) return;
+    const box = deviceOutput.current;
+    const mark = box.querySelector('mark');
+    if (!mark) return;
+    const bounds = box.getBoundingClientRect();
+    const target = mark.getBoundingClientRect();
+    if (target.top < bounds.top || target.bottom > bounds.bottom)
+      box.scrollTop += target.top - bounds.top - box.clientHeight / 2;
+  }, [matchStart, query, flashTab, preview.offset, showTime]);
+
+  function closeFind() {
+    setFinding(false);
+    findButton.current?.focus();
+  }
+
+  function stepMatch(step) {
+    if (matches.length) {
+      const next = (selected + step + matches.length) % matches.length;
+      setMatchAnchor(displayedOffset + matches[next]);
+    }
+  }
 
   function changeWithKeyboard(event) {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -420,6 +534,16 @@ function LogConsole({ workbench, rate, setRate, platform }) {
         role="tabpanel"
         aria-labelledby="log-tab"
         hidden={flashTab}
+        onKeyDown={(event) => {
+          if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+            event.preventDefault();
+            setFinding(true);
+            findField.current?.select();
+          } else if (finding && event.key === 'Escape' && !event.nativeEvent.isComposing) {
+            event.preventDefault();
+            closeFind();
+          }
+        }}
       >
         <div className="row spread log-controls">
           <button
@@ -443,27 +567,55 @@ function LogConsole({ workbench, rate, setRate, platform }) {
               ))}
             </select>
           </label>
-          <Check checked={!paused} onChange={(event) => setPaused(!event.target.checked)}>
+          <Check checked={showTime} onChange={(event) => { setMatchAnchor(0); setShowTime(event.target.checked); }}>
+            时间
+          </Check>
+          <Check checked={!paused && !finding} disabled={finding} onChange={(event) => setPaused(!event.target.checked)}>
             自动滚动
           </Check>
+          <button type="button" className="btn find-toggle" ref={findButton} aria-label="查找日志"
+            title="查找日志 (Ctrl / ⌘ + F)" aria-expanded={finding}
+            onClick={() => finding ? closeFind() : setFinding(true)}>
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <circle cx="8" cy="8" r="5.5" /><path d="m12 12 5 5" />
+            </svg>
+          </button>
           <small className="sr-only" id="log-rate-help">
             UART 读取速率需与固件控制台配置一致。原生 USB 日志请按板卡说明连接。
           </small>
         </div>
+        {finding && (
+          <div className="row log-find" role="search" aria-label="查找串口日志">
+            <input ref={findField} aria-label="查找内容" placeholder="查找日志" value={query}
+              onChange={(event) => { setQuery(event.target.value); setMatchAnchor(0); }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  stepMatch(event.shiftKey ? -1 : 1);
+                }
+              }} />
+            <small role="status">{query && (matches.length ? (selected + 1) + ' / ' + matches.length : '无匹配')}</small>
+            <button className="btn" type="button" aria-label="上一处" title="上一处" disabled={!matches.length} onClick={() => stepMatch(-1)}>↑</button>
+            <button className="btn" type="button" aria-label="下一处" title="下一处" disabled={!matches.length} onClick={() => stepMatch(1)}>↓</button>
+            <button className="btn" type="button" aria-label="关闭查找" title="关闭查找" onClick={closeFind}>×</button>
+          </div>
+        )}
         <pre
           ref={deviceOutput}
           id="monitor-output"
           aria-label="设备日志输出"
           tabIndex={0}
         >
-          {bootLog ? <SerialLog text={bootLog} /> : (monitoring ? '等待设备日志…' : '连接后显示设备日志。')}
+          {bootLog ? <SerialLog text={bootLog} matchStart={matchStart} matchLength={query.length} /> : (monitoring ? '等待设备日志…' : '连接后显示设备日志。')}
         </pre>
+        <CommandForm workbench={workbench} />
+        {workbench.commandMessage && <small role="status">{workbench.commandMessage}</small>}
         <div className="row log-actions">
           <button
             className="btn"
             type="button"
             disabled={!bootLog}
-            onClick={workbench.clearLog}
+            onClick={() => { setMatchAnchor(0); workbench.clearLog(); }}
           >
             清空日志
           </button>

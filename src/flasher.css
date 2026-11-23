@@ -415,6 +415,7 @@ progress {
   color: #a42325;
 }
 .console-pane {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -423,6 +424,54 @@ progress {
 }
 .log-controls {
   font-size: 0.88rem;
+}
+.find-toggle {
+  display: inline-grid;
+  place-items: center;
+}
+.log-find input {
+  flex: 1 1 9em;
+  min-width: 0;
+}
+.log-find small {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.log-find .btn {
+  min-width: 32px;
+  padding-inline: 6px;
+}
+#monitor-output mark {
+  color: #242d3c;
+  background: #ebcb8b;
+}
+.command-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.command-row input {
+  flex: 1 1 0;
+  font-family: ui-monospace, monospace;
+  min-width: 0;
+}
+.command-row select {
+  font-size: 0.86rem;
+}
+.command-row button {
+  white-space: nowrap;
+}
+@container (max-width: 420px) {
+  .command-row {
+    flex-wrap: wrap;
+  }
+  .command-row input {
+    order: -1;
+    flex-basis: 100%;
+  }
+  .command-row button {
+    margin-left: auto;
+  }
 }
 .log-actions .btn {
   font-size: 0.85rem;

@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { createSerialPreview } from './serial-preview.mjs';
+import { encodeSerialCommand } from './serial-command.mjs';
 import { startSerialRecording } from './serial-recording.mjs';
 import { downloadFirmware } from './catalog.mjs';
 import {
@@ -18,9 +20,13 @@ const initialState = {
   monitoring: false,
   monitorReceived: false,
   monitorMessage: '',
+  canSend: false,
+  sending: false,
+  commandMessage: '',
+  commandHistory: [],
   recording: false,
   recordingMessage: '',
-  bootLog: '',
+  preview: { text: '', offset: 0, firstLine: 0, stamps: [] },
   flashLog: '',
   tab: 'log',
   progress: null,
@@ -32,7 +38,9 @@ export function useWorkbench() {
   const flash = useRef(null);
   const retryPort = useRef(null);
   const monitor = useRef(null);
-  const preview = useRef({ text: '', timer: null });
+  const preview = useRef(null);
+  if (!preview.current) preview.current = createSerialPreview(logLimit);
+  const previewTimer = useRef(null);
   const lastFlashedPort = useRef(null);
   const busy = useRef(false);
   const update = (patch) => setView((old) => ({ ...old, ...patch }));
@@ -44,25 +52,16 @@ export function useWorkbench() {
     if (text)
       setView((old) => ({ ...old, [key]: (old[key] + text).slice(-logLimit) }));
   };
-  function takePreview() {
-    const buffer = preview.current;
-    clearTimeout(buffer.timer);
-    buffer.timer = null;
-    const text = buffer.text;
-    buffer.text = '';
-    return text;
-  }
-
   function flushPreview() {
-    appendLog('bootLog', takePreview());
+    clearTimeout(previewTimer.current);
+    previewTimer.current = null;
+    update({ preview: preview.current.snapshot() });
   }
 
   function queuePreview(text) {
     if (!text) return;
-    const buffer = preview.current;
-    buffer.text += text;
-    if (buffer.text.length > 2 * logLimit) buffer.text = buffer.text.slice(-logLimit);
-    if (buffer.timer === null) buffer.timer = setTimeout(flushPreview, 100);
+    preview.current.append(text);
+    if (previewTimer.current === null) previewTimer.current = setTimeout(flushPreview, 100);
   }
 
   const progress = (message, percent, outcome = 'writing') => {
@@ -135,6 +134,35 @@ export function useWorkbench() {
     }, (recordingMessage) => update({ recordingMessage }));
   }
 
+  async function sendCommand(command, format, ending) {
+    const active = monitor.current;
+    if (!active || active.stopping || active.writer || busy.current || !command) return;
+    let writer;
+    try {
+      const bytes = encodeSerialCommand(command, format, ending);
+      writer = active.port.writable.getWriter();
+      active.writer = writer;
+      update({ sending: true, commandMessage: '正在发送…' });
+      await writer.write(bytes);
+      if (!active.stopping) {
+        const entry = { command, format, ending };
+        setView(old => ({
+          ...old,
+          commandMessage: '指令已发送。',
+          commandHistory: [...old.commandHistory.filter(item =>
+            item.command !== command || item.format !== format ||
+            (format === 'text' && item.ending !== ending)), entry].slice(-50),
+        }));
+      }
+    } catch (error) {
+      if (!active.stopping) update({ commandMessage: '发送失败。' + error.message });
+    } finally {
+      writer?.releaseLock();
+      active.writer = null;
+      if (monitor.current === active) update({ sending: false });
+    }
+  }
+
   async function readMonitor(active) {
     const decoder = new TextDecoder();
     let message = '';
@@ -157,13 +185,15 @@ export function useWorkbench() {
     } finally {
       const requestedStop = active.stopping;
       active.stopping = true;
+      update({ canSend: false, commandMessage: '', commandHistory: [] });
+      const cancelWrite = active.writer?.abort().catch(() => {});
       const tail = decoder.decode();
       queuePreview(tail);
       flushPreview();
       active.recorder?.append(tail);
       const saved = stopRecording(active);
       clearTimeout(active.releaseTimer);
-      await active.signalTask;
+      await Promise.all([active.signalTask, cancelWrite]);
       active.reader.releaseLock();
       if (active.port.readable || active.port.writable) {
         try {
@@ -195,8 +225,12 @@ export function useWorkbench() {
       throw error;
     }
     const active = { port, reader, stopping: false };
+    preview.current.beginSession();
     monitor.current = active;
-    update({ monitoring: true, monitorReceived: false, monitorMessage: '', recordingMessage: '' });
+    update({
+      monitoring: true, monitorReceived: false, monitorMessage: '', recordingMessage: '',
+      canSend: Boolean(port.writable), sending: false, commandMessage: '', commandHistory: [],
+    });
     active.done = readMonitor(active);
     if (
       platform === 'bk7258' ||
@@ -461,6 +495,7 @@ export function useWorkbench() {
     write,
     toggleMonitor,
     toggleRecording,
+    sendCommand,
     setTab,
     showDeviceLog,
     resetForPlatform: () => {
@@ -477,8 +512,8 @@ export function useWorkbench() {
       flashStatus(initialState.deviceMessage);
     },
     clearLog: () => {
-      takePreview();
-      update({ bootLog: '' });
+      preview.current = createSerialPreview(logLimit);
+      flushPreview();
     },
   };
 }
