@@ -18,6 +18,7 @@ function memoryDirectory() {
         files.set(name, '');
       }
       return {
+        async getFile() { return { size: Buffer.byteLength(files.get(name)) }; },
         async createWritable({ keepExistingData }) {
           let content = keepExistingData ? files.get(name) : '';
           return {
@@ -119,6 +120,7 @@ test('a failed file close aborts the checkpoint and preserves earlier data', asy
   directory.getFileHandle = async (...args) => {
     const file = await lookup(...args);
     return {
+      ...file,
       async createWritable(options) {
         const stream = await file.createWritable(options);
         if (++commits === 2) {
@@ -138,4 +140,33 @@ test('a failed file close aborts the checkpoint and preserves earlier data', asy
   assert.deepEqual([...directory.files.values()], [block]);
   assert.deepEqual(errors, ['disk full']);
   assert.equal(aborts, 1);
+});
+
+test('a changed file is preserved when recording resumes at the next checkpoint', async () => {
+  const directory = memoryDirectory();
+  const errors = [];
+  const recording = startSerialRecording(directory, error => errors.push(error.message));
+  await recording.append('a'.repeat(256 * 1024));
+  const [name] = directory.files.keys();
+  directory.files.set(name, 'edited externally');
+  recording.append('later serial output');
+  assert.equal(await recording.stop(), false);
+  assert.deepEqual([...directory.files.values()], ['edited externally']);
+  assert.match(errors[0], /文件大小已被更改/);
+});
+
+test('queued checkpoints after a disk error report once and two stop calls agree', async () => {
+  let attempts = 0;
+  const errors = [];
+  const recording = startSerialRecording({
+    async getFileHandle() {
+      attempts++;
+      throw new DOMException('permission revoked', 'NotAllowedError');
+    },
+  }, error => errors.push(error.name));
+  for (let i = 0; i < 5; i++) recording.append('x'.repeat(256 * 1024));
+  const results = await Promise.all([recording.stop(), recording.stop()]);
+  assert.deepEqual(results, [false, false]);
+  assert.equal(attempts, 1);
+  assert.deepEqual(errors, ['NotAllowedError']);
 });

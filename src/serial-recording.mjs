@@ -38,6 +38,8 @@ export function startSerialRecording(directory, onError) {
     }
     const stream = await file.createWritable({ keepExistingData: size > 0 });
     try {
+      if ((await file.getFile()).size !== size)
+        throw new Error('日志文件大小已被更改，请重新开始记录。');
       await stream.seek(size);
       await stream.write(blob);
       await stream.close();
@@ -50,7 +52,8 @@ export function startSerialRecording(directory, onError) {
 
   function flush() {
     if (!characters) return writing;
-    const blob = new Blob(pending);
+    // Tiny UART chunks otherwise become separate browser Blob parts.
+    const blob = new Blob([pending.join('')]);
     const count = characters;
     queuedCharacters += count;
     pending = [];

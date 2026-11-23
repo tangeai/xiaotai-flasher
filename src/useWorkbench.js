@@ -32,6 +32,7 @@ export function useWorkbench() {
   const flash = useRef(null);
   const retryPort = useRef(null);
   const monitor = useRef(null);
+  const preview = useRef({ text: '', timer: null });
   const lastFlashedPort = useRef(null);
   const busy = useRef(false);
   const update = (patch) => setView((old) => ({ ...old, ...patch }));
@@ -43,6 +44,27 @@ export function useWorkbench() {
     if (text)
       setView((old) => ({ ...old, [key]: (old[key] + text).slice(-logLimit) }));
   };
+  function takePreview() {
+    const buffer = preview.current;
+    clearTimeout(buffer.timer);
+    buffer.timer = null;
+    const text = buffer.text;
+    buffer.text = '';
+    return text;
+  }
+
+  function flushPreview() {
+    appendLog('bootLog', takePreview());
+  }
+
+  function queuePreview(text) {
+    if (!text) return;
+    const buffer = preview.current;
+    buffer.text += text;
+    if (buffer.text.length > 2 * logLimit) buffer.text = buffer.text.slice(-logLimit);
+    if (buffer.timer === null) buffer.timer = setTimeout(flushPreview, 100);
+  }
+
   const progress = (message, percent, outcome = 'writing') => {
     update({ progress: { message, percent, outcome } });
   };
@@ -127,7 +149,7 @@ export function useWorkbench() {
           received = true;
           update({ monitorReceived: true });
         }
-        appendLog('bootLog', output);
+        queuePreview(output);
         active.recorder?.append(output);
       }
     } catch (error) {
@@ -136,9 +158,10 @@ export function useWorkbench() {
       const requestedStop = active.stopping;
       active.stopping = true;
       const tail = decoder.decode();
-      appendLog('bootLog', tail);
+      queuePreview(tail);
+      flushPreview();
       active.recorder?.append(tail);
-      await stopRecording(active);
+      const saved = stopRecording(active);
       clearTimeout(active.releaseTimer);
       await active.signalTask;
       active.reader.releaseLock();
@@ -149,6 +172,7 @@ export function useWorkbench() {
           message = '无法释放日志串口。' + error.message;
         }
       }
+      await saved;
       if (monitor.current === active) {
         monitor.current = null;
         update({
@@ -452,6 +476,9 @@ export function useWorkbench() {
       });
       flashStatus(initialState.deviceMessage);
     },
-    clearLog: () => update({ bootLog: '' }),
+    clearLog: () => {
+      takePreview();
+      update({ bootLog: '' });
+    },
   };
 }
