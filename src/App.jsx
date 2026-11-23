@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import brandMark from './assets/xiaotai-brand-mark.png';
 import { canonicalBoardSlug, loadBoards } from './catalog.mjs';
 import { prepareFirmware } from './firmware.mjs';
@@ -124,6 +124,7 @@ function FirmwarePicker({
         <label>
           <input
             type="radio"
+            className="sr-only"
             name="source"
             value="official"
             checked={origin === 'official'}
@@ -135,6 +136,7 @@ function FirmwarePicker({
         <label>
           <input
             type="radio"
+            className="sr-only"
             name="source"
             value="local"
             checked={origin === 'local'}
@@ -149,7 +151,7 @@ function FirmwarePicker({
       </small>
       <div id="official" className="options" hidden={origin !== 'official'}>
         <label className="field">
-          开发板
+          开发板型号
           <select
             id="board"
             value={selection.slug}
@@ -286,6 +288,26 @@ function FirmwarePicker({
   );
 }
 
+const logLevels = {
+  I: 'info', INFO: 'info', OK: 'ok', SUCCESS: 'ok',
+  W: 'warn', WARN: 'warn', WARNING: 'warn',
+  E: 'error', ERR: 'error', ERROR: 'error',
+};
+
+const SerialLog = memo(function SerialLog({ text }) {
+  // Match level prefixes after an optional timestamp, including ESP-IDF's I (123) form.
+  const prefix = /^(?:\x1b\[[0-9;]*m)*(?:\[?\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\]?[ \t]+)?\[?(INFO|OK|SUCCESS|WARN(?:ING)?|ERR(?:OR)?|[IWE](?= \(\d+\)))\b/gm;
+  const parts = [];
+  let offset = 0;
+  for (const match of text.matchAll(prefix)) {
+    const end = match.index + match[0].length;
+    parts.push(text.slice(offset, end - match[1].length));
+    parts.push(<span className={`log-${logLevels[match[1]]}`} key={end}>{match[1]}</span>);
+    offset = end;
+  }
+  return <>{parts}{text.slice(offset)}</>;
+});
+
 function LogConsole({ workbench, rate, setRate, platform }) {
   const {
     tab,
@@ -388,7 +410,7 @@ function LogConsole({ workbench, rate, setRate, platform }) {
             烧录过程
           </button>
         </div>
-        <span className="console-status" role="status">
+        <span className="console-status" data-outcome={flashTab ? progress?.outcome : undefined} role="status">
           {flashTab ? taskStatus : monitoring ? (monitorReceived ? '已收到日志' : '等待输出') : '未连接'}
         </span>
       </div>
@@ -421,6 +443,9 @@ function LogConsole({ workbench, rate, setRate, platform }) {
               ))}
             </select>
           </label>
+          <Check checked={!paused} onChange={(event) => setPaused(!event.target.checked)}>
+            自动滚动
+          </Check>
           <small className="sr-only" id="log-rate-help">
             UART 读取速率需与固件控制台配置一致。原生 USB 日志请按板卡说明连接。
           </small>
@@ -431,24 +456,16 @@ function LogConsole({ workbench, rate, setRate, platform }) {
           aria-label="设备日志输出"
           tabIndex={0}
         >
-          {bootLog || (monitoring ? '等待设备日志…' : '连接后显示设备日志。')}
+          {bootLog ? <SerialLog text={bootLog} /> : (monitoring ? '等待设备日志…' : '连接后显示设备日志。')}
         </pre>
         <div className="row log-actions">
-          <button
-            className="btn"
-            type="button"
-            aria-pressed={paused}
-            onClick={() => setPaused(!paused)}
-          >
-            {paused ? '恢复滚动' : '暂停滚动'}
-          </button>
           <button
             className="btn"
             type="button"
             disabled={!bootLog}
             onClick={workbench.clearLog}
           >
-            清空
+            清空日志
           </button>
           <button
             className="btn"
@@ -456,7 +473,7 @@ function LogConsole({ workbench, rate, setRate, platform }) {
             disabled={!bootLog}
             onClick={() => copyLog(bootLog)}
           >
-            复制
+            复制日志
           </button>
           <button
             className="btn"
@@ -915,7 +932,7 @@ export function App() {
             </select>
           </label>
           <p
-            className={`device-status ${deviceError ? 'error' : 'muted'}`}
+            className={`device-status ${deviceError ? 'error' : device ? 'connected' : 'muted'}`}
             role="status"
           >
             {deviceMessage}
@@ -932,7 +949,7 @@ export function App() {
           ) : (
             <>
               <button
-                className="btn"
+                className="btn primary"
                 type="button"
                 disabled={busy || !serialAvailable}
                 onClick={() => connectDevice(canReconnect)}
@@ -1030,7 +1047,7 @@ export function App() {
               {progress && (
                 <div className="actions">
                   <div className="row spread">
-                    <strong role="status">{progress.message}</strong>
+                    <strong role="status" data-outcome={progress.outcome}>{progress.message}</strong>
                     <span>{progress.percent}%</span>
                   </div>
                   <progress

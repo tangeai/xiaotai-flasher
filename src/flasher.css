@@ -1,11 +1,11 @@
 :root {
   color-scheme: light;
-  --ink: #172026;
-  --muted: #586970;
-  --accent: #087d89;
-  --line: #dce6e8;
-  --paper: #f2f7f7;
-  --tint: #edf7f7;
+  --ink: #242d3c;
+  --muted: #536173;
+  --accent: #396872;
+  --line: #c4ccd8;
+  --paper: #eceff4;
+  --tint: #e9eef4;
   font:
     16px Inter,
     'PingFang SC',
@@ -97,9 +97,9 @@ small:empty {
 select,
 input:not([type='checkbox'], [type='radio']) {
   min-width: 0;
-  min-height: 34px;
+  min-height: 38px;
   padding: 5px 9px;
-  border: 1px solid #c7d7db;
+  border: 1px solid #aab5c5;
   border-radius: 7px;
   background: #fff;
   color: var(--ink);
@@ -117,7 +117,7 @@ input:not([type='checkbox'], [type='radio']) {
   border-color: var(--accent);
 }
 .btn.primary:hover:enabled {
-  background: #066d77;
+  background: #2d5460;
 }
 .btn.subtle {
   border-color: transparent;
@@ -131,8 +131,8 @@ input:where([type='checkbox'], [type='radio']) {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 16px;
-  background: white;
+  padding: 14px 20px;
+  background: var(--paper);
   border-bottom: 1px solid var(--line);
 }
 .brand {
@@ -174,13 +174,13 @@ input:where([type='checkbox'], [type='radio']) {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 10px 12px;
-  gap: 8px;
+  padding: 14px;
+  gap: 14px;
 }
 .device-bar {
   flex: none;
-  min-height: 48px;
-  padding: 6px 12px;
+  min-height: 60px;
+  padding: 10px 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
@@ -193,11 +193,9 @@ input:where([type='checkbox'], [type='radio']) {
 .workbench {
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(330px, 400px) minmax(0, 1fr);
+  grid-template-columns: minmax(320px, 42fr) minmax(0, 58fr);
+  gap: 14px;
   min-height: 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: white;
 }
 .flash-panel,
 .console {
@@ -205,17 +203,66 @@ input:where([type='checkbox'], [type='radio']) {
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }
 .flash-settings {
   flex: 1;
   overflow: auto;
   min-height: 0;
-  padding: 14px;
+  padding: clamp(16px, 1.8vw, 28px);
 }
 .choices {
-  margin: 5px 0 8px;
-  column-gap: 16px;
-  font-size: 0.9rem;
+  display: flex;
+  gap: 0;
+  margin: 16px 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--paper);
+  overflow: hidden;
+}
+.choices label {
+  position: relative;
+  flex: 1;
+  padding: 8px;
+  text-align: center;
+  cursor: pointer;
+}
+.choices label:has(:checked) {
+  background: var(--accent);
+  color: white;
+}
+.choices label:has(:focus-visible) {
+  outline: 2px solid currentColor;
+  outline-offset: -4px;
+}
+.choices label:has(:disabled) {
+  opacity: 0.6;
+  cursor: default;
+}
+#official {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+#firmware-title,
+.app-title h1 {
+  font-size: clamp(1.15rem, 1.5vw, 1.5rem);
+}
+.device-status::before {
+  content: '';
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #8793a3;
+  margin-right: 8px;
+}
+.device-status.connected::before {
+  background: #54814c;
+}
+.device-status.error::before {
+  background: #bf616a;
 }
 #catalog-status {
   margin: 0 0 8px;
@@ -267,10 +314,8 @@ details[open] > summary {
   margin-bottom: 8px;
 }
 .launch {
-  padding: 12px 14px;
+  padding: 16px clamp(16px, 1.8vw, 28px);
   border-top: 1px solid var(--line);
-  border-radius: 0 0 0 8px;
-  background: var(--tint);
 }
 .launch p {
   flex: 1;
@@ -280,7 +325,7 @@ details[open] > summary {
 }
 #start {
   min-height: 45px;
-  min-width: 130px;
+  width: 100%;
   font-size: 1rem;
 }
 #start:disabled {
@@ -312,34 +357,48 @@ progress {
 
 .console {
   padding: 12px;
-  border-left: 1px solid var(--line);
-  gap: 8px;
+  gap: 12px;
+}
+.console-head {
+  border-bottom: 1px solid var(--line);
 }
 .tabs {
   display: flex;
-  gap: 3px;
-  padding: 3px;
-  border-radius: 8px;
-  background: var(--tint);
 }
 .tabs button {
+  padding: 8px 12px 12px;
   background: transparent;
   color: var(--muted);
-  border: 1px solid transparent;
-  border-radius: 6px;
-  padding: 4px 9px;
-  font-size: 0.88rem;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  font-weight: 600;
 }
 .tabs button[aria-selected='true'] {
-  background: white;
-  color: var(--accent);
-  border-color: var(--line);
-  font-weight: 700;
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+.log-info {
+  color: #88c0d0;
+}
+.log-ok {
+  color: #a3be8c;
+}
+.log-warn {
+  color: #ebcb8b;
+}
+.log-error {
+  color: #e899a0;
 }
 .console-status {
   font-size: 0.84rem;
   color: var(--accent);
   font-weight: 650;
+}
+[data-outcome='success'] {
+  color: #38663a;
+}
+[data-outcome='failed'] {
+  color: #a42325;
 }
 .console-pane {
   display: flex;
@@ -359,15 +418,15 @@ pre {
   flex: 1;
   min-height: 0;
   margin: 0;
-  padding: 12px;
-  border-radius: 8px;
-  background: #17262c;
-  color: #e7f3f4;
+  padding: 18px;
+  border-radius: 7px;
+  background: #2e3440;
+  color: #eceff4;
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font:
-    13px / 1.6 ui-monospace,
+    14px / 1.7 ui-monospace,
     monospace;
 }
 dialog {
@@ -380,7 +439,7 @@ dialog {
   color: var(--ink);
 }
 dialog::backdrop {
-  background: #17262c65;
+  background: #2e344065;
 }
 dialog p {
   overflow-wrap: anywhere;
@@ -466,13 +525,6 @@ dialog p {
   }
   .flash-settings {
     overflow: visible;
-  }
-  .launch {
-    border-radius: 0;
-  }
-  .console {
-    border: 0;
-    border-top: 1px solid var(--line);
   }
   pre {
     min-height: 240px;
