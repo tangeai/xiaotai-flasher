@@ -613,7 +613,19 @@ function HelpDialog({ dialogRef, onClose }) {
       </p>
       <details className="settings-group">
         <summary>找不到串口</summary>
-        <p>检查数据线和 USB 串口驱动。关闭占用串口的其他工具，再连接设备。</p>
+        <p>列表中已有开发板串口时，直接选择即可。若串口被占用，请关闭其他串口工具。</p>
+        <dl className="driver-help">
+          <dt>Windows</dt>
+          <dd>
+            在设备管理器中查看 COM 口。若提示缺少驱动，CH340 / CH341 可用
+            <a href="https://www.wch-ic.com/downloads/ch341ser_exe.html" target="_blank" rel="noreferrer">沁恒驱动</a>。
+          </dd>
+          <dt>macOS</dt>
+          <dd>
+            若系统询问是否允许配件连接，请点「允许」。若仍找不到 CH340 / CH341 串口，可尝试
+            <a href="https://www.wch-ic.com/downloads/CH341SER_MAC_ZIP.html" target="_blank" rel="noreferrer">沁恒驱动</a>。
+          </dd>
+        </dl>
       </details>
       <details className="settings-group">
         <summary>无法进入下载模式</summary>

@@ -461,6 +461,19 @@ dialog p {
 #troubleshooting p {
   font-size: 0.9rem;
 }
+.driver-help {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 12px;
+  margin: 8px 0;
+  font-size: 0.9rem;
+}
+.driver-help dt {
+  font-weight: 600;
+}
+.driver-help dd {
+  margin: 0;
+}
 .dialog-actions {
   justify-content: end;
 }
