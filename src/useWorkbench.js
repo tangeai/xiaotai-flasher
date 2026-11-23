@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { startSerialRecording } from './serial-recording.mjs';
 import { downloadFirmware } from './catalog.mjs';
 import {
   isKnownUartBridge,
@@ -17,6 +18,8 @@ const initialState = {
   monitoring: false,
   monitorReceived: false,
   monitorMessage: '',
+  recording: false,
+  recordingMessage: '',
   bootLog: '',
   flashLog: '',
   tab: 'log',
@@ -76,6 +79,40 @@ export function useWorkbench() {
     await active.done;
   }
 
+  async function stopRecording(active) {
+    if (!active?.recorder) return;
+    const recorder = active.recorder;
+    const saved = await recorder.stop();
+    if (active.recorder === recorder) {
+      active.recorder = null;
+      update(saved ? { recording: false, recordingMessage: '记录已结束。' } : { recording: false });
+    }
+  }
+
+  function toggleRecording() {
+    return run(async () => {
+      const active = monitor.current;
+      if (!active || active.stopping) return;
+      if (active.recorder) {
+        await stopRecording(active);
+        return;
+      }
+      let directory;
+      try {
+        directory = await window.showDirectoryPicker({ mode: 'readwrite' });
+      } catch (error) {
+        if (error.name === 'AbortError') return;
+        throw error;
+      }
+      if (monitor.current !== active || active.stopping) return;
+      active.recorder = startSerialRecording(directory, (error) => {
+        update({ recordingMessage: '文件记录中断。' + error.message });
+        void stopRecording(active);
+      });
+      update({ recording: true, recordingMessage: '正在记录到 ' + directory.name + '，每份约 10 MiB。' });
+    }, (recordingMessage) => update({ recordingMessage }));
+  }
+
   async function readMonitor(active) {
     const decoder = new TextDecoder();
     let message = '';
@@ -91,11 +128,17 @@ export function useWorkbench() {
           update({ monitorReceived: true });
         }
         appendLog('bootLog', output);
+        active.recorder?.append(output);
       }
-      appendLog('bootLog', decoder.decode());
     } catch (error) {
       if (!active.stopping) message = '串口读取中断。' + error.message;
     } finally {
+      const requestedStop = active.stopping;
+      active.stopping = true;
+      const tail = decoder.decode();
+      appendLog('bootLog', tail);
+      active.recorder?.append(tail);
+      await stopRecording(active);
       clearTimeout(active.releaseTimer);
       await active.signalTask;
       active.reader.releaseLock();
@@ -112,7 +155,7 @@ export function useWorkbench() {
           monitoring: false,
           monitorReceived: false,
           monitorMessage:
-            message || (active.stopping ? '' : '串口已断开。请重新连接。'),
+            message || (requestedStop ? '' : '串口已断开。请重新连接。'),
         });
       }
     }
@@ -129,7 +172,7 @@ export function useWorkbench() {
     }
     const active = { port, reader, stopping: false };
     monitor.current = active;
-    update({ monitoring: true, monitorReceived: false, monitorMessage: '' });
+    update({ monitoring: true, monitorReceived: false, monitorMessage: '', recordingMessage: '' });
     active.done = readMonitor(active);
     if (
       platform === 'bk7258' ||
@@ -393,6 +436,7 @@ export function useWorkbench() {
     disconnect,
     write,
     toggleMonitor,
+    toggleRecording,
     setTab,
     showDeviceLog,
     resetForPlatform: () => {
@@ -404,6 +448,7 @@ export function useWorkbench() {
         progress: null,
         flashLog: '',
         monitorMessage: '',
+        recordingMessage: '',
       });
       flashStatus(initialState.deviceMessage);
     },

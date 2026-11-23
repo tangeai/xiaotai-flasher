@@ -483,8 +483,19 @@ function LogConsole({ workbench, rate, setRate, platform }) {
           >
             下载日志
           </button>
+          {typeof window.showDirectoryPicker === 'function' && (
+            <button
+              className="btn"
+              type="button"
+              disabled={!monitoring || busy}
+              onClick={workbench.toggleRecording}
+            >
+              {workbench.recording ? '停止记录' : '记录到文件夹'}
+            </button>
+          )}
         </div>
         <small role="status">{monitorMessage}</small>
+        {workbench.recordingMessage && <small role="status">{workbench.recordingMessage}</small>}
         {complete && (
           <p id="monitor-setup" className="callout">
             完整镜像已写入。请重新配置设备 Wi‑Fi，再到
