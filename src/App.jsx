@@ -4,6 +4,16 @@ import { SplitWorkbench } from './SplitWorkbench.jsx';
 import brandMark from './assets/xiaotai-brand-mark.png';
 import { canonicalBoardSlug, loadBoards } from './catalog.mjs';
 import { prepareFirmware } from './firmware.mjs';
+import { lierdaBoards, prepareLierdaFirmware } from './lierda-firmware.mjs';
+import {
+  initialLierdaSelection,
+  lierdaBoardForLink,
+  LierdaFirmwarePicker,
+  LierdaFlashSummary,
+  matchesLierdaDevice,
+  useLierdaPreflight,
+  useLierdaReleases,
+} from './lierda-ui.jsx';
 import { bkSettingFields, settingFields } from './settings.mjs';
 import { useWorkbench } from './useWorkbench.js';
 
@@ -851,8 +861,23 @@ export function App() {
     boards: [],
     message: '正在读取固件目录…',
   });
-  const [origin, setOrigin] = useState('local');
-  const [platform, setPlatform] = useState('esp32');
+  const [requestedLierdaBoard] = useState(() =>
+    lierdaBoardForLink(new URL(location.href).searchParams.get('board')),
+  );
+  const [originChoice, setOrigin] = useState(requestedLierdaBoard ? null : 'local');
+  const [platform, setPlatform] = useState(requestedLierdaBoard ? 'lierda' : 'esp32');
+  const [lierdaChoice, setLierdaChoice] = useState(() =>
+    initialLierdaSelection(requestedLierdaBoard),
+  );
+  const lierda = platform === 'lierda';
+  const lierdaBoard = lierdaBoards.find(({ model }) => model === lierdaChoice.model);
+  const lierdaReleases = useLierdaReleases(lierdaBoard, lierda);
+  const lierdaRelease = lierdaReleases?.find(({ version }) => version === lierdaChoice.liteVersion)
+    ?? lierdaReleases?.find(({ recommended }) => recommended)
+    ?? lierdaReleases?.[0];
+  const lierdaOrigin = lierdaChoice.origin ?? (lierdaRelease ? 'official' : 'local');
+  const lierdaSelection = { ...lierdaChoice, origin: lierdaOrigin };
+  const lierdaPreflight = useLierdaPreflight(lierdaSelection, lierda);
   const [selection, setSelection] = useState(() => ({
     slug: '',
     version: '',
@@ -880,14 +905,19 @@ export function App() {
     deviceMessage,
     deviceError,
     canReconnect,
+    needsLierdaDownloadPort,
+    flashBackup,
     progress,
     complete,
     serialAvailable,
   } = workbench;
+  const detectedLierdaBoard = lierdaBoards.find(({ model }) => model === device?.lierdaModel);
+  const pendingLierdaMismatch = pending?.kind === 'lierda' &&
+    (pending.targetDevice !== device || !matchesLierdaDevice(pending, device));
 
   useEffect(() => {
     const abort = new AbortController();
-    const requested = new URL(location.href).searchParams.get('board');
+    const requested = requestedLierdaBoard ? null : new URL(location.href).searchParams.get('board');
     const configURL = new URL('boards-source.json', document.baseURI);
     loadBoards(configURL, abort.signal)
       .then((boards) => {
@@ -904,7 +934,7 @@ export function App() {
                 ? ''
                 : '暂无已发布的小钛固件，可导入本地 BIN。',
         });
-        if (board && !userSelected.current) {
+        if (board && !requestedLierdaBoard && !userSelected.current) {
           setPlatform(platformFor(board.chip));
           setSelection((old) => ({
             ...old,
@@ -923,7 +953,20 @@ export function App() {
         });
       });
     return () => abort.abort();
-  }, []);
+  }, [requestedLierdaBoard]);
+
+  useEffect(() => {
+    if (!detectedLierdaBoard) return;
+    setLierdaChoice((current) => {
+      if (current.modelChosen || current.model === detectedLierdaBoard.model) return current;
+      return {
+        ...current,
+        model: detectedLierdaBoard.model,
+        origin: current.origin ?? lierdaOrigin,
+        file: null,
+      };
+    });
+  }, [detectedLierdaBoard, lierdaOrigin]);
 
   useEffect(() => {
     const changed = () => setFullscreen(Boolean(document.fullscreenElement));
@@ -947,6 +990,16 @@ export function App() {
     setSelection((old) => ({ ...old, ...patch }));
   }
 
+  function changeLierdaModel(model) {
+    setLierdaChoice((current) => ({
+      ...current,
+      model,
+      modelChosen: true,
+      origin: current.origin ?? lierdaOrigin,
+      file: null,
+    }));
+  }
+
   function changeSetting(key, value) {
     setSettings((old) => ({ ...old, [key]: value }));
   }
@@ -955,6 +1008,7 @@ export function App() {
   const platformBoards = catalog.boards.filter(
     (board) => platformFor(board.chip) === platform,
   );
+  const origin = originChoice ?? (platformBoards.length ? 'official' : 'local');
   const board =
     platformBoards.find(({ slug }) => slug === selection.slug) ??
     platformBoards[0];
@@ -971,10 +1025,14 @@ export function App() {
   function changePlatform(value) {
     userSelected.current = true;
     setPlatform(value);
-    changeSelection({ merged: null, segmented: false, segments: [newSegment()] });
+    if (value === 'lierda') {
+      setLierdaChoice((current) => ({ ...current, file: null }));
+    } else {
+      changeSelection({ merged: null, segmented: false, segments: [newSegment()] });
+    }
     workbench.resetForPlatform();
     workbench.setTab('log');
-    if (!catalog.boards.some((board) => platformFor(board.chip) === value))
+    if (value !== 'lierda' && originChoice !== null && !catalog.boards.some((board) => platformFor(board.chip) === value))
       setOrigin('local');
   }
 
@@ -982,7 +1040,34 @@ export function App() {
   let readinessMessage;
   if (!serialAvailable)
     readinessMessage = '请在桌面 Chrome 或 Edge 中打开 HTTPS 烧录页。';
-  else {
+  else if (lierda) {
+    if (!device) {
+      readinessMessage = '先连接设备，再选择固件。';
+    } else if (!matchesLierdaDevice(lierdaBoard, device)) {
+      readinessMessage = detectedLierdaBoard && detectedLierdaBoard !== lierdaBoard
+        ? `已连接 ${detectedLierdaBoard.name}，请选择对应板型。`
+        : '设备芯片或 Flash 容量与所选板型不匹配。';
+    } else {
+      try {
+        const firmware = prepareLierdaFirmware(
+          { ...lierdaSelection, selectedRelease: lierdaRelease },
+          device.capacity,
+        );
+        if (lierdaPreflight === 'checking') {
+          readinessMessage = '正在校验固件…';
+        } else if (lierdaPreflight === 'invalid') {
+          readinessMessage = firmware.model === 'pro-f9'
+            ? '固件与 NT26F9D0（F9D_D）不匹配。'
+            : '固件与利尔达 Lite 不匹配。';
+        } else {
+          ready = { ...firmware, targetDevice: device };
+          readinessMessage = '固件已就绪。';
+        }
+      } catch (error) {
+        readinessMessage = error.message;
+      }
+    }
+  } else {
     try {
       const firmware = prepareFirmware(
         {
@@ -1019,6 +1104,11 @@ export function App() {
     const firmware = pending;
     setPending(null);
     if (!confirm || !firmware) return;
+    if (firmware.kind === 'lierda') {
+      if (pendingLierdaMismatch) return;
+      workbench.write(firmware, { restart: true, autoLog: false, logRate: rate });
+      return;
+    }
     workbench.write(firmware, {
       restart: settings['after-reset'] === 'reset',
       autoLog: settings.autoLog,
@@ -1034,8 +1124,16 @@ export function App() {
     });
   }
 
-  function connectDevice(reusePort = false) {
+  function connectDevice(reusePort = false, chooseOther = false) {
     userSelected.current = true;
+    if (lierda) {
+      workbench.connect({
+        platform,
+        baudrate: 921600,
+        lierdaModel: lierdaSelection.model,
+      }, reusePort, chooseOther);
+      return;
+    }
     workbench.connect(
       {
         platform,
@@ -1061,6 +1159,7 @@ export function App() {
 
   const completed = progress?.outcome === 'success';
   const showResetHint = bk && !device && !busy && !completed;
+  const selectLierdaDownload = lierda && needsLierdaDownloadPort;
   return (
     <>
       <header className="app-header">
@@ -1077,7 +1176,9 @@ export function App() {
         <div className="app-title">
           <h1>固件烧录与串口日志工作台</h1>
           <p className="muted">
-            适用芯片：ESP32、S2、S3、C2、C3、C5、C6、H2、P4、BK7258
+            {lierda
+              ? '适用芯片：EC718PM、EC718HM'
+              : '适用芯片：ESP32、S2、S3、C2、C3、C5、C6、H2、P4、BK7258'}
           </p>
         </div>
         <nav className="header-actions" aria-label="工作台工具">
@@ -1117,6 +1218,7 @@ export function App() {
             >
               <option value="esp32">乐鑫 Espressif（ESP32 系列）</option>
               <option value="bk7258">博通集成 Beken（BK7258）</option>
+              <option value="lierda">利尔达（移芯）</option>
             </select>
           </label>
           <p
@@ -1140,17 +1242,17 @@ export function App() {
                 className="btn primary"
                 type="button"
                 disabled={busy || !serialAvailable}
-                aria-describedby={showResetHint ? 'bk-reset-hint' : undefined}
-                onClick={() => connectDevice(canReconnect)}
+                aria-describedby={showResetHint ? 'bk-reset-hint' : lierda && !busy ? 'lierda-port-hint' : undefined}
+                onClick={() => connectDevice(!selectLierdaDownload && canReconnect)}
               >
-                {canReconnect ? '重新连接' : '连接设备'}
+                {selectLierdaDownload ? '选择下载口' : canReconnect ? '重新连接' : '连接设备'}
               </button>
-              {canReconnect && (
+              {(canReconnect || (lierda && deviceError)) && !selectLierdaDownload && (
                 <button
                   className="btn"
                   type="button"
                   disabled={busy || !serialAvailable}
-                  onClick={() => connectDevice()}
+                  onClick={() => connectDevice(false, true)}
                 >
                   选择其他串口
                 </button>
@@ -1162,34 +1264,60 @@ export function App() {
               选择 DL_UART0，看到「等待下载握手」时按一下 <kbd>RESET</kbd>。已自动连接可跳过。
             </p>
           )}
+          {lierda && !device && !busy && (
+            <p id="lierda-port-hint" className="reset-hint">
+              {selectLierdaDownload
+                ? '请在 Chrome 中选择 Lierda QDLoader Port。'
+                : '优先连接已授权的利尔达串口。弹窗中请选择 Mobile AT Interface 或 QDLoader。'}
+            </p>
+          )}
         </section>
         <SplitWorkbench>
           <section id="firmware-panel" className="flash-panel" aria-labelledby="firmware-title">
             <div className="flash-settings">
-              <FirmwarePicker
-                key={platform}
-                catalog={{ ...catalog, boards: platformBoards }}
-                origin={origin}
-                choose={(value) => {
-                  userSelected.current = true;
-                  setOrigin(value);
-                }}
-                selection={selected}
-                change={changeSelection}
-                busy={busy}
-                bk={bk}
-              />
-              <FlashOptions
-                settings={settings}
-                change={changeSetting}
-                disabled={busy}
-                official={origin === 'official'}
-                connected={Boolean(device)}
-                bk={bk}
-              />
+              {lierda ? (
+                <LierdaFirmwarePicker
+                  board={lierdaBoard}
+                  releases={lierdaReleases}
+                  release={lierdaRelease}
+                  selection={lierdaSelection}
+                  setSelection={setLierdaChoice}
+                  onModelChange={changeLierdaModel}
+                  busy={busy}
+                />
+              ) : (
+                <>
+                  <FirmwarePicker
+                    key={platform}
+                    catalog={{ ...catalog, boards: platformBoards }}
+                    origin={origin}
+                    choose={(value) => {
+                      userSelected.current = true;
+                      setOrigin(value);
+                    }}
+                    selection={selected}
+                    change={changeSelection}
+                    busy={busy}
+                    bk={bk}
+                  />
+                  <FlashOptions
+                    settings={settings}
+                    change={changeSetting}
+                    disabled={busy}
+                    official={origin === 'official'}
+                    connected={Boolean(device)}
+                    bk={bk}
+                  />
+                </>
+              )}
+              {lierda && flashBackup && (
+                <button className="btn actions" type="button" disabled={busy} onClick={workbench.downloadFlashBackup}>
+                  下载烧录前备份
+                </button>
+              )}
               {completed && (
                 <div className="actions">
-                  {complete && (
+                  {complete && (!lierda || lierdaSelection.model === 'lite') && (
                     <p className="callout">
                       完整镜像已写入。请重新配网和绑定设备。
                     </p>
@@ -1226,18 +1354,20 @@ export function App() {
                     : '开始烧录'}
                 </button>
               </div>
-              <div className="actions">
-                <Check
-                  checked={settings.autoLog}
-                  disabled={busy || settings['after-reset'] === 'stay'}
-                  onChange={(event) =>
-                    changeSetting('autoLog', event.target.checked)
-                  }
-                  help="重启后尝试用已授权的串口读取运行输出。"
-                >
-                  烧录完成后打开串口日志
-                </Check>
-              </div>
+              {!lierda && (
+                <div className="actions">
+                  <Check
+                    checked={settings.autoLog}
+                    disabled={busy || settings['after-reset'] === 'stay'}
+                    onChange={(event) =>
+                      changeSetting('autoLog', event.target.checked)
+                    }
+                    help="重启后尝试用已授权的串口读取运行输出。"
+                  >
+                    烧录完成后打开串口日志
+                  </Check>
+                </div>
+              )}
               {progress && (
                 <div className="actions">
                   <div className="row spread">
@@ -1263,19 +1393,29 @@ export function App() {
         onClose={beginWrite}
       >
         <h2 id="confirm-title">确认烧录</h2>
-        {pending && <FlashSummary firmware={pending} chip={device?.chip} />}
-        <p className="muted actions">
-          {!bk && settings.eraseAll
-            ? '将擦除整片 Flash。请确认现有设备数据可以清除。'
-            : pending?.kind === 'segments'
-              ? '将擦除镜像覆盖的 Flash 扇区。'
-              : '烧录后请重新配网和绑定设备。'}
-        </p>
+        {pending?.kind === 'lierda' ? (
+          <LierdaFlashSummary firmware={pending} />
+        ) : (
+          <>
+            {pending && <FlashSummary firmware={pending} chip={device?.chip} />}
+            <p className="muted actions">
+              {!bk && settings.eraseAll
+                ? '将擦除整片 Flash。请确认现有设备数据可以清除。'
+                : pending?.kind === 'segments'
+                  ? '将擦除镜像覆盖的 Flash 扇区。'
+                  : '烧录后请重新配网和绑定设备。'}
+            </p>
+          </>
+        )}
         <form method="dialog" className="row dialog-actions actions">
           <button className="btn" value="cancel">
             返回
           </button>
-          <button className="btn primary" value="flash" disabled={!device}>
+          <button
+            className="btn primary"
+            value="flash"
+            disabled={!device || pendingLierdaMismatch}
+          >
             确认写入
           </button>
         </form>

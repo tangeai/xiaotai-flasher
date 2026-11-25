@@ -7,6 +7,7 @@ usage() {
 
   update        快进拉取、构建并发布
   catalog       从 GitHub Releases 更新板卡目录，可加 --include-prerelease
+  catalog-lite  从 GitHub Releases 导入利尔达 Lite 正式版固件
   status        查看当前发布、源码提交、板卡目录和可用版本
   rollback 版本  切换到 status 列出的指定版本
   help          显示此帮助
@@ -23,7 +24,7 @@ log() { printf '[INFO] %s\n' "$*"; }
 command="${1:-help}"
 case "$command" in
   help|-h|--help) usage; exit ;;
-  update|status) [[ $# -eq 1 ]] || fail "$command 不接受位置参数。" ;;
+  update|status|catalog-lite) [[ $# -eq 1 ]] || fail "$command 不接受位置参数。" ;;
   catalog) [[ $# -eq 1 || ( $# -eq 2 && "$2" = --include-prerelease ) ]] || fail 'catalog 仅接受 --include-prerelease。' ;;
   rollback) [[ $# -eq 2 ]] || fail '请指定 status 显示的版本目录名。' ;;
   *) usage >&2; exit 2 ;;
@@ -59,6 +60,11 @@ if [[ "$command" == catalog ]]; then
   shift
   umask 022
   exec node "$repo/scripts/generate-boards.mjs" --output-dir "$root/board-catalog" "$@"
+fi
+
+if [[ "$command" == catalog-lite ]]; then
+  umask 022
+  exec node "$repo/scripts/import-lierda-lite.mjs" --output-dir "$root/lierda-lite-firmware"
 fi
 
 [[ -z "$(git -C "$repo" status --porcelain)" ]] || fail '生产源码目录有未提交修改，请先处理。'

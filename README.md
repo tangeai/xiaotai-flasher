@@ -208,6 +208,40 @@ sudo /opt/xiaotai-flasher/deploy-prod.sh update
 
 如果 `catalog` 下载失败，先根据日志检查该 GitHub 地址，再重跑 `catalog`。Release 附件通常会跳转到 `release-assets.githubusercontent.com`，服务器也需要能访问该域名。首次上线可以先生成正式版目录，再加 `--include-prerelease` 更新测试版。脚本会重试临时网络错误，并复用已校验的 BIN。
 
+## 利尔达（移芯）烧录
+
+在芯片平台选「利尔达（移芯）」，点「连接设备」。页面会使用已授权的唯一匹配串口，切换到下载模式并等待 QDLoader。首次使用时，按浏览器提示分别授权运行态 AT 口和下载口。已在下载模式的设备可直接授权 QDLoader。确认型号后选择固件开始烧录。
+
+切换板型时保留「小钛固件」或「本地 BINPKG」，重新选择该板型的本地文件。连接后依据底包指纹和应用布局识别芯片及支持的 Flash 配置。设备与所选板型一致、固件校验通过后才能烧录。擦除前再次核对当前设备的完整底包和应用布局。
+
+- Lite 语音版 NT26F6D0 使用 F6D_D。支持已导入的小钛正式版固件或匹配的本地完整 BINPKG。写前备份 4 MiB 内部 Flash，写入后回读校验。
+- Pro 视频通话版 NT26F9D0 使用 F9D_D。可选「小钛固件」中的测试版或导入与现有底包匹配的本地完整 BINPKG。备份 8 MiB 后只更新 APP，回读校验应用并核对其余内部 Flash。
+
+### 更新 Lite 在线版本
+
+将稳定版发布为 `lite-vX.Y.Z` 标签，并上传一个完整 Lite BINPKG 与一个 `SHA256SUMS.txt`。校验文件使用 `sha256sum` 格式，文件名须与 Release 附件一致。 [小钛利尔达 Releases](https://github.com/tangeai/xiaotai-lierda/releases)
+
+首次在生产站点启用利尔达时，按以下顺序操作。
+
+1. 先在生产源码中快进拉取此次更新，安装 AgentBoot 的 Git 忽略规则。默认路径下运行 `sudo git -C /opt/xiaotai-flasher/xiaotai-flasher pull --ff-only`。
+2. 将对应版本的 USB AgentBoot 原件放到生产源码目录的 `public/lierda/agentboot-ec718pm-usb.bin`。默认完整路径是 `/opt/xiaotai-flasher/xiaotai-flasher/public/lierda/agentboot-ec718pm-usb.bin`。核对下文的大小和 SHA-256 后，运行 `sudo /opt/xiaotai-flasher/deploy-prod.sh update`。
+3. 将仓库 Nginx 配置中的 Lite 路由合入站点 HTTPS 配置。运行 `sudo nginx -t`，通过后运行 `sudo systemctl reload nginx`。
+4. 导入 Lite 正式版。此后发布新版本时可单独重跑导入命令。
+
+```bash
+sudo /opt/xiaotai-flasher/deploy-prod.sh catalog-lite
+```
+
+导入命令校验附件 SHA-256、NT26F6D0 F6D_D 的底包及应用布局。校验完成后发布带摘要的包名，再切换 `/web-flasher/lierda/firmware/lite.json`。目录与固件保存在部署根目录的 `lierda-lite-firmware/`。版本列表按版本号降序排列，推荐最新正式版。目录暂不可用时，页面使用内置的小钛 Lite 固件。
+
+### 更新 Pro 在线版本
+
+准备获准部署的完整 F9D_D BINPKG 和 `pro.json`，在站点同源的 `/web-flasher/lierda/firmware/` 下提供这两个文件。`pro.json` 填写 `modem`（NT26F9D0）、`modempkg`（F9D_D）、`version`、`filename`、`byte_length` 和 `sha256`。先发布固件文件，再更新目录。可通过站点单独配置的静态路径提供这两个文件，或将获准分发的文件作为构建输入放入 `public/lierda/firmware/`。
+
+`releases/lierda/firmware/` 下的测试包及本机生成的 `releases/preview-online.mjs` 仅用于本机联调。
+
+可通过 /web-flasher/?board=lierda-lite 或 /web-flasher/?board=lierda-pro 直达对应型号。两款机型共用厂商的 50,032 字节 USB AgentBoot，构建前将原件放到 public/lierda/agentboot-ec718pm-usb.bin。SHA-256 为 045bd0c74a030143230f07484e4711600005b992e3b0776be042e42d141a38e5。
+
 ## 本地开发
 
 ```bash
