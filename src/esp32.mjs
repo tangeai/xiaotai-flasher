@@ -1,3 +1,4 @@
+import { LocalizedError } from './i18n.mjs';
 import { chips } from './chips.mjs';
 import SparkMD5 from 'spark-md5';
 import { ESPLoader, Transport } from './vendor/esptool-0.7.0.mjs';
@@ -26,13 +27,13 @@ export async function connectEsp32(port, settings, print) {
     const description = await loader.main(settings.before);
     const chip = loader.chip;
     if (!chips.includes(chip.CHIP_NAME))
-      throw new Error('请选择 ESP32 系列设备的串口。');
+      throw new LocalizedError('请选择 ESP32 系列设备的串口。');
     if (loader.secureDownloadMode)
-      throw new Error('设备处于安全下载模式，请使用与设备配套的烧录流程。');
+      throw new LocalizedError('设备处于安全下载模式，请使用与设备配套的烧录流程。');
     const detected = await loader.detectFlashSize();
     const capacity = detected && loader.flashSizeBytes(detected);
     if (!(capacity > 0))
-      throw new Error('无法识别 Flash 容量，请检查设备后重连。');
+      throw new LocalizedError('无法识别 Flash 容量，请检查设备后重连。');
     return {
       chip: chip.CHIP_NAME,
       description,
@@ -43,7 +44,7 @@ export async function connectEsp32(port, settings, print) {
       async write(images, options, progress) {
         validateLayout(images, capacity);
         if (options.eraseAll && !loader.IS_STUB)
-          throw new Error('当前设备连接方式无法执行全片擦除。');
+          throw new LocalizedError('当前设备连接方式无法执行全片擦除。');
         const overrides = [
           options.flashMode,
           options.flashFreq,
@@ -54,7 +55,7 @@ export async function connectEsp32(port, settings, print) {
           options.flashSize !== 'detect' &&
           loader.flashSizeBytes(options.flashSize) !== capacity
         ) {
-          throw new Error('所选 Flash 容量与设备检测结果不一致。');
+          throw new LocalizedError('所选 Flash 容量与设备检测结果不一致。');
         }
         let bootFound = false;
         const fileArray = [];
@@ -82,7 +83,7 @@ export async function connectEsp32(port, settings, print) {
           fileArray.push({ ...image, data });
         }
         if (overrides && !bootFound)
-          throw new Error('修改 Flash 参数时，请同时提供启动镜像。');
+          throw new LocalizedError('修改 Flash 参数时，请同时提供启动镜像。');
         const totalSize = images.reduce(
           (total, image) => total + image.size,
           0,

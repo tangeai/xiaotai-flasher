@@ -162,12 +162,63 @@ input:where([type='checkbox'], [type='radio']) {
   font-size: 0.79rem;
 }
 .header-actions {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--muted);
+}
+.header-actions svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.header-actions button,
+.language-control select {
+  height: 34px;
+  min-height: 34px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
 }
 .header-actions button {
-  white-space: nowrap;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  padding: 0;
+}
+.language-control {
+  position: relative;
+  margin-right: 2px;
+  padding-right: 4px;
+  border-right: 1px solid var(--line);
+}
+.language-control svg {
+  position: absolute;
+  z-index: 1;
+  left: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.language-control select {
+  padding: 0 3px 0 30px;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+.header-actions button:hover,
+.language-control select:hover {
+  background-color: var(--tint);
+  color: var(--ink);
 }
 
 .app {
@@ -396,13 +447,11 @@ progress {
 .console-notice:empty {
   display: block;
   flex: 0 0 auto;
-  height: 28px;
+  min-height: 28px;
   margin: 0;
   padding-top: 6px;
   border-top: 1px solid var(--line);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 .console-head {
   border-bottom: 1px solid var(--line);
@@ -489,26 +538,29 @@ progress {
 .console-bottom {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 24px;
+  flex-wrap: wrap;
+  gap: 8px 16px;
 }
 .console-bottom .log-actions {
-  flex: none;
+  margin-left: auto;
   justify-content: flex-end;
-  padding-left: 16px;
-  border-left: 2px solid var(--line);
 }
 .command-row {
+  flex: 1 1 max-content;
+  max-width: 100%;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
 }
 .command-row input {
-  width: 44ch;
-  flex: 0 1 44ch;
+  width: 20ch;
+  flex: 1 1 20ch;
   font-family: ui-monospace, monospace;
   min-width: 0;
+}
+.command-row :is(select, button) {
+  flex: none;
 }
 .command-row select {
   font-size: 0.86rem;
@@ -523,12 +575,13 @@ progress {
     gap: 8px;
   }
   .console-bottom .log-actions {
+    margin-left: 0;
     padding: 8px 0 0;
     border-left: 0;
     border-top: 1px solid var(--line);
   }
 }
-@container (max-width: 420px) {
+@container (max-width: 520px) {
   .log-find input {
     flex: 1 1 8ch;
   }
@@ -664,9 +717,6 @@ dialog p {
   h1 {
     font-size: 1rem;
   }
-  .header-actions button {
-    padding-inline: 6px;
-  }
   .app {
     padding: 8px;
   }
@@ -685,6 +735,24 @@ dialog p {
     max-height: 55vh;
   }
 }
+@media (max-width: 600px) {
+  .app-header {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    padding: 10px 12px;
+    gap: 8px 10px;
+  }
+  .app-title {
+    display: block;
+  }
+  .app-title p {
+    margin-top: 3px;
+  }
+  .header-actions {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+}
 @media (max-width: 540px) {
   .device-bar > label {
     flex-basis: 100%;
@@ -694,7 +762,7 @@ dialog p {
     flex: 1;
   }
 }
-@container (max-width: 420px) {
+@container (max-width: 520px) {
   .firmware-row,
   .options {
     grid-template-columns: 1fr;
@@ -707,6 +775,7 @@ dialog p {
 
 body > #root {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
   height: 100dvh;
 }

@@ -1,3 +1,4 @@
+import { LocalizedError, releaseLabel, t, localizedMessage } from './i18n.mjs';
 import { useEffect, useRef, useState } from 'react';
 import { createSerialPreview } from './serial-preview.mjs';
 import { createAtReplyReader, encodeSerialCommand } from './serial-command.mjs';
@@ -85,7 +86,7 @@ export function useWorkbench() {
       await task();
     } catch (error) {
       onError(
-        error.name === 'NotFoundError' ? '已取消选择串口。' : error.message,
+        error.name === 'NotFoundError' ? '已取消选择串口。' : error,
         error,
       );
     } finally {
@@ -136,10 +137,10 @@ export function useWorkbench() {
       }
       if (monitor.current !== active || active.stopping) return;
       active.recorder = startSerialRecording(directory, (error) => {
-        update({ monitorMessage: '文件记录中断。' + error.message });
+        update({ monitorMessage: localizedMessage('文件记录中断。@0', error) });
         void stopRecording(active);
       });
-      update({ recording: true, monitorMessage: '正在记录到 ' + directory.name + '，每份约 10 MiB。' });
+      update({ recording: true, monitorMessage: localizedMessage('正在记录到 @0，每份约 10 MiB。', directory.name) });
     }, monitorStatus);
   }
 
@@ -159,12 +160,12 @@ export function useWorkbench() {
       writer = active.port.writable.getWriter();
       active.writer = writer;
       if (testAt) active.atReply = createAtReplyReader(active.atLineStart);
-      update({ sending: true, testingAt: testAt, monitorMessage: testAt ? '正在等待 AT 回包…' : '正在发送…' });
+      update({ sending: true, testingAt: testAt, monitorMessage: testAt ? '正在等待 AT 响应…' : '正在发送…' });
       await writer.write(bytes);
       if (testAt) {
         if (active.atReply && !active.stopping) {
           active.atTimer = setTimeout(() => finishAt(active,
-            '3 秒内未收到 AT 回包。请核对主控制台接口、波特率和固件是否开放物理 AT。'), 3000);
+            '3 秒内未收到 AT 响应。请检查控制台接口、波特率，并确认固件支持通过串口发送 AT 指令。'), 3000);
         }
         return;
       }
@@ -180,8 +181,8 @@ export function useWorkbench() {
       }
     } catch (error) {
       if (!active.stopping) {
-        if (testAt) finishAt(active, 'AT 发送失败。' + error.message);
-        else update({ monitorMessage: '发送失败。' + error.message });
+        if (testAt) finishAt(active, localizedMessage('AT 发送失败。@0', error));
+        else update({ monitorMessage: localizedMessage('发送失败。@0', error) });
       }
     } finally {
       writer?.releaseLock();
@@ -205,7 +206,7 @@ export function useWorkbench() {
         if (reply === 'Unrecognized command') {
           finishAt(active, '串口收发正常。当前控制台不识别 AT，可发送 help 查看支持的命令。');
         } else if (reply) {
-          finishAt(active, reply === 'OK' ? '设备已响应 AT（OK）。' : '设备返回 ' + reply);
+          finishAt(active, reply === 'OK' ? '设备已响应 AT（OK）。' : localizedMessage('设备返回 @0', reply));
         }
         if (output && !received) {
           received = true;
@@ -215,7 +216,7 @@ export function useWorkbench() {
         active.recorder?.append(output);
       }
     } catch (error) {
-      if (!active.stopping) message = '串口读取中断。' + error.message;
+      if (!active.stopping) message = localizedMessage('串口读取中断。@0', error);
     } finally {
       const requestedStop = active.stopping;
       active.stopping = true;
@@ -237,7 +238,7 @@ export function useWorkbench() {
         try {
           await active.port.close();
         } catch (error) {
-          message = '无法释放日志串口。' + error.message;
+          message = localizedMessage('无法释放日志串口。@0', error);
         }
       }
       await saved;
@@ -282,7 +283,7 @@ export function useWorkbench() {
           .then(() => releaseSerialControlLines(port))
           .catch((error) => {
             if (!active.stopping && monitor.current === active)
-              monitorStatus('无法自动释放 RTS/DTR。' + error.message);
+              monitorStatus(localizedMessage('无法自动释放 RTS/DTR。@0', error));
           });
       }, serialOutputGraceMs);
     }
@@ -300,7 +301,7 @@ export function useWorkbench() {
         flashStatus('正在检查已授权的利尔达串口…');
         port = await selectLierdaPort(serial, { chooseOther });
       }
-      if (!port) throw new Error('请重新选择利尔达串口。');
+      if (!port) throw new LocalizedError('请重新选择利尔达串口。');
       retryPort.current = null;
       pendingLierdaDownload.current = null;
       update({ canReconnect: false, needsLierdaDownloadPort: false });
@@ -315,7 +316,7 @@ export function useWorkbench() {
           await requestLierdaDownloadMode(atPort, { log: line => appendLog('flashLog', line + '\n') });
         } catch (error) {
           appendLog('flashLog', error.message + '\n');
-          throw new Error('未能切换下载模式。请选择 Lierda At Port 或 Mobile AT Interface。', { cause: error });
+          throw new LocalizedError('未能切换下载模式。请选择 Lierda At Port 或 Mobile AT Interface。', { cause: error });
         }
         const transition = { atPort, previousPorts };
         pendingLierdaDownload.current = transition;
@@ -337,7 +338,7 @@ export function useWorkbench() {
       lierdaBackup.current = null;
       update({ device: session, canReconnect: false, flashBackup: null });
       const model = session.lierdaModel === 'pro-f9' ? 'NT26F9D0' : 'NT26F6D0';
-      flashStatus(`已连接 · ${model} · ${session.chip} · Flash ${session.capacityLabel}`);
+      flashStatus(localizedMessage('已连接 · @0 · @1 · Flash @2', model, session.chip, session.capacityLabel));
     }, (message, error) => {
       if (error.name === 'NotFoundError') {
         pendingLierdaDownload.current = null;
@@ -350,7 +351,7 @@ export function useWorkbench() {
         canReconnect: Boolean(retryPort.current),
         needsLierdaDownloadPort: Boolean(pendingLierdaDownload.current),
       });
-      appendLog('flashLog', message + '\n');
+      appendLog('flashLog', t(message) + '\n');
       flashStatus(message, true);
     });
   }
@@ -363,14 +364,14 @@ export function useWorkbench() {
         const port = reusePort
           ? retryPort.current
           : await serial.requestPort();
-        if (!port) throw new Error('请重新选择烧录串口。');
+        if (!port) throw new LocalizedError('请重新选择烧录串口。');
         retryPort.current = port;
         await releaseMonitor();
         update({ flashLog: '', progress: null, complete: false });
         const bk = options.platform === 'bk7258';
         flashStatus(
           bk
-            ? '正在打开 DL_UART0，请留意烧录过程中的握手提示。'
+            ? '正在打开所选串口，请留意烧录日志中的握手提示。'
             : '正在连接并识别 ESP32…',
         );
         if (bk) setTab('flash');
@@ -389,14 +390,14 @@ export function useWorkbench() {
         retryPort.current = null;
         update({ device: session, canReconnect: false });
         flashStatus(
-          `已连接 · ${session.chip} · Flash ${session.capacityLabel}`,
+          localizedMessage('已连接 · @0 · Flash @1', session.chip, session.capacityLabel),
         );
       },
       (message, error) => {
         flashStatus(message, error.name !== 'NotFoundError');
         if (error.name !== 'NotFoundError') {
           update({ canReconnect: Boolean(retryPort.current) });
-          appendLog('flashLog', message + '\n');
+          appendLog('flashLog', t(message) + '\n');
           setTab('flash');
         }
       },
@@ -421,7 +422,7 @@ export function useWorkbench() {
       }
       const port = await serial.requestPort();
       if (platform === 'lierda' && isDownloadPort(port)) {
-        throw new Error('请选择运行中的 Lierda At Port。');
+        throw new LocalizedError('请选择运行中的 Lierda At Port。');
       }
       if (flash.current?.port === port) {
         await releaseFlash();
@@ -471,7 +472,7 @@ export function useWorkbench() {
       try {
         const input = await resolveLierdaFirmware(firmware, abort.signal);
         abort.signal.throwIfAborted();
-        appendLog('flashLog', '选定固件：' + input.filename + '\n');
+        appendLog('flashLog', t('选定固件：@0\n', input.filename));
         await releaseMonitor();
         abort.signal.throwIfAborted();
         await session.writeLierda(input, {
@@ -502,10 +503,10 @@ export function useWorkbench() {
         await session.reset();
         flashStatus('写入并校验完成。设备已复位。');
       } catch (error) {
-        appendLog('flashLog', '自动复位失败：' + error.message + '\n');
+        appendLog('flashLog', t('自动复位失败：@0\n', error.message));
         flashStatus('写入并校验完成。请按板上的复位键启动固件。');
       } finally {
-        await releaseFlash().catch(error => appendLog('flashLog', '释放串口失败：' + error.message + '\n'));
+        await releaseFlash().catch(error => appendLog('flashLog', t('释放串口失败：@0\n', error.message)));
       }
     }, message => flashStatus(message, true));
   }
@@ -522,7 +523,7 @@ export function useWorkbench() {
       anchor.click();
       setTimeout(() => URL.revokeObjectURL(url), 30000);
     } catch (error) {
-      flashStatus('无法导出备份。' + error.message, true);
+      flashStatus(localizedMessage('无法导出备份。@0', error), true);
     }
   }
 
@@ -564,12 +565,12 @@ export function useWorkbench() {
           abort.signal.throwIfAborted();
           const label =
             firmware.kind === 'official'
-              ? firmware.release.version +
+              ? releaseLabel(firmware.release.version) +
                 (firmware.release.embedded_version
-                  ? `（设备版本 ${firmware.release.embedded_version}）`
+                  ? t('（固件内置版本 @0）', firmware.release.embedded_version)
                   : '')
-              : firmware.entries.map(({ name }) => name).join('、');
-          appendLog('flashLog', `选定固件：${label}\n`);
+              : firmware.entries.map(({ name }) => name).join(t('、'));
+          appendLog('flashLog', t('选定固件：@0\n', label));
           await releaseMonitor();
           abort.signal.throwIfAborted();
           progress('固件已就绪，正在准备擦写', 0);
@@ -595,7 +596,7 @@ export function useWorkbench() {
           setTab('flash');
           appendLog('flashLog', '\n' + failure.message + '\n');
           if (!writeStarted && flash.current === active && !abort.signal.aborted) {
-            appendLog('flashLog', '尚未开始擦写，串口仍已连接。可重新选择固件或再次开始烧录。\n');
+            appendLog('flashLog', t('尚未开始擦写，串口仍已连接。可重新选择固件或再次开始烧录。\n'));
             return;
           }
           if (flash.current === active) {
@@ -603,7 +604,7 @@ export function useWorkbench() {
             update({ canReconnect: true });
           }
           await releaseFlash().catch((closeError) => {
-            appendLog('flashLog', '释放串口失败：' + closeError.message + '\n');
+            appendLog('flashLog', t('释放串口失败：') + closeError.message + '\n');
           });
           throw failure;
         }
@@ -617,20 +618,20 @@ export function useWorkbench() {
           if (options.restart) resetStatus = await session.reset();
         } catch (error) {
           resetFailed = true;
-          appendLog('flashLog', '自动复位失败：' + error.message + '\n');
+          appendLog('flashLog', t('自动复位失败：@0', error) + '\n');
         } finally {
           try {
             await releaseFlash();
           } catch (error) {
             resetFailed = true;
-            appendLog('flashLog', '释放串口失败：' + error.message + '\n');
+            appendLog('flashLog', t('释放串口失败：@0', error) + '\n');
           }
         }
         flashStatus(
           !options.restart || resetFailed
             ? '写入并校验完成。请按板上的复位键启动固件。'
             : typeof resetStatus === 'string'
-              ? '写入并校验完成。' + resetStatus
+              ? localizedMessage('写入并校验完成。@0', localizedMessage(resetStatus))
               : '写入并校验完成。设备已复位。',
         );
         if (options.restart && options.autoLog && !resetFailed) {
@@ -638,7 +639,7 @@ export function useWorkbench() {
           try {
             await startMonitor(port, options.logRate, active.platform);
           } catch (error) {
-            monitorStatus('无法自动打开日志串口。' + error.message);
+            monitorStatus(localizedMessage('无法自动打开日志串口。@0', error));
           }
         }
       },
@@ -663,12 +664,12 @@ export function useWorkbench() {
         const active = flash.current;
         if (active.platform === 'lierda' && active.resetting) return;
         flash.current = null;
-        const error = new Error('设备串口已断开，请重新连接。');
+        const error = new LocalizedError('设备串口已断开，请重新连接。');
         active.abort.abort(error);
         active.session.close().catch(() => {});
         update({
           device: null,
-          deviceMessage: error.message,
+          deviceMessage: error,
           deviceError: true,
         });
       }
@@ -679,6 +680,8 @@ export function useWorkbench() {
 
   return {
     ...view,
+    deviceMessage: t(view.deviceMessage),
+    monitorMessage: t(view.monitorMessage),
     serialAvailable: Boolean(serial),
     monitorStatus,
     connect,

@@ -1,3 +1,4 @@
+import { LocalizedError, localizedMessage } from './i18n.mjs';
 const blockSize = 34;
 const payloadSize = 32;
 const appOffset = 0x11000;
@@ -15,7 +16,7 @@ function codeCrc(data) {
 
 export function validateBk7258Image(data) {
   const invalid = () =>
-    new Error('请选择适配此板卡的 BK7258 原始 all-app.bin 完整镜像。');
+    new LocalizedError('请选择适配此板卡的 BK7258 原始 all-app.bin 完整镜像。');
   if (
     !(data instanceof Uint8Array) ||
     data.length < appOffset + blockSize ||
@@ -35,8 +36,8 @@ export function validateBk7258Image(data) {
     if (block.every((byte) => byte === 0xff)) continue;
     const expected = (block[payloadSize] << 8) | block[payloadSize + 1];
     if (codeCrc(block.subarray(0, payloadSize)) !== expected) {
-      throw new Error(
-        `BK7258 镜像校验失败，文件偏移 0x${offset.toString(16)}。`,
+      throw new LocalizedError(
+        localizedMessage('BK7258 镜像校验失败，文件偏移 0x@0。', offset.toString(16)),
       );
     }
   }

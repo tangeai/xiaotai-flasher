@@ -1,3 +1,4 @@
+import { LocalizedError, t, localizedMessage } from './i18n.mjs';
 import { validateBk7258Image } from './bk7258-image.mjs';
 import { releaseSerialControlLines } from './serial-signals.mjs';
 import { bkWriteRates } from './settings.mjs';
@@ -63,7 +64,7 @@ function commandFrame(command, payload, extended) {
   return frame;
 }
 
-class ReplyTimeout extends Error {
+class ReplyTimeout extends LocalizedError {
   constructor() {
     super('BK7258 下载串口无响应。');
   }
@@ -87,7 +88,7 @@ function serialCommands(port) {
     } catch (error) {
       readError = error;
     } finally {
-      readError ??= new Error('BK7258 下载串口已断开。');
+      readError ??= new LocalizedError('BK7258 下载串口已断开。');
       pending?.finish(readError);
       reader.releaseLock();
     }
@@ -136,8 +137,8 @@ function serialCommands(port) {
             if (flash !== extended || frame[flash ? 9 : 6] !== expected)
               continue;
             if (flash && frame[10] !== 0) {
-              const error = new Error(
-                `BK7258 Flash 命令返回状态 ${frame[10]}。`,
+              const error = new LocalizedError(
+                localizedMessage('BK7258 Flash 命令返回状态 @0。', frame[10]),
               );
               error.status = frame[10];
               finish(error);
@@ -196,7 +197,7 @@ function serialCommands(port) {
     send: (opcode, data) => writer.write(commandFrame(opcode, data, false)),
     close({ drain = false } = {}) {
       closed ??= (async () => {
-        pending?.finish(new Error('BK7258 下载串口已关闭。'));
+        pending?.finish(new LocalizedError('BK7258 下载串口已关闭。'));
         try {
           if (drain) await writer.close();
         } finally {
@@ -216,7 +217,7 @@ async function releaseResetSignals(port, print) {
   try {
     await releaseSerialControlLines(port);
   } catch {
-    print('无法释放串口 RTS/DTR，请检查 USB 串口驱动。\n');
+    print(t('无法释放串口 RTS/DTR，请检查 USB 串口驱动。\n'));
   }
 }
 
@@ -226,7 +227,7 @@ async function holdBootReset(port, print) {
     await port.setSignals({ dataTerminalReady: false, requestToSend: true });
     await wait(200);
   } catch {
-    print('串口 RTS 自动复位不可用，请手动复位。\n');
+    print(t('串口 RTS 自动复位不可用，请手动复位。\n'));
   }
   return () => releaseResetSignals(port, print);
 }
@@ -252,10 +253,10 @@ async function bootLink(commands, port, print, autoReset) {
   } catch (error) {
     if (!(error instanceof ReplyTimeout)) throw error;
     const received = commands.receivedBytes;
-    throw new Error(
+    throw new LocalizedError(
       received
-        ? `串口收到 ${received} 字节，但没有 BK7258 下载应答。确认选中 DL_UART0，并用芯片复位键或电源开关重试。`
-        : 'BK7258 下载串口未收到数据。请确认选中 DL_UART0，并保持 USB 串口连线再复位或重新给板供电。',
+        ? localizedMessage('串口收到 @0 字节，但没有 BK7258 下载应答。请确认所选串口连接到板端下载接口，再按复位键或重新上电。', received)
+        : 'BK7258 下载串口未收到数据。请确认所选串口连接到板端下载接口，保持 USB 连接，再按复位键或重新上电。',
     );
   } finally {
     await release;
@@ -265,15 +266,15 @@ async function bootLink(commands, port, print, autoReset) {
 async function readRegister(commands, address, timeout) {
   const response = await commands.exchange(0x03, word(address), { timeout });
   if (response.length !== 8 || readWord(response) !== address) {
-    throw new Error('BK7258 芯片识别响应无效。');
+    throw new LocalizedError('BK7258 芯片识别响应无效。');
   }
   return readWord(response, 4);
 }
 
 function commandFailure(operation, commands, receivedBefore, error) {
   const received = commands.receivedBytes - receivedBefore;
-  return new Error(
-    `${operation}失败（收到 ${received} 字节）：${error.message}`,
+  return new LocalizedError(
+    localizedMessage('@0失败（收到 @1 字节）：@2', operation, received, error),
     {
       cause: error,
     },
@@ -303,10 +304,10 @@ async function readStatus(commands) {
       commands,
       0x0c,
       [opcode],
-      `读取 Flash 状态寄存器（SPI 0x${opcode.toString(16).padStart(2, '0')}）`,
+      localizedMessage('读取 Flash 状态寄存器（SPI 0x@0）', opcode.toString(16).padStart(2, '0')),
     );
     if (data.length !== 2 || data[0] !== opcode)
-      throw new Error('BK7258 Flash 状态读取失败。');
+      throw new LocalizedError('BK7258 Flash 状态读取失败。');
     values.push(data[1]);
   }
   return values;
@@ -329,9 +330,9 @@ async function setStatus(commands, current, target, separate, readCurrentStatus)
         commands,
         0x0d,
         [opcode, ...bytes],
-        `写入 Flash 状态寄存器（SPI 0x${opcode.toString(16).padStart(2, '0')}）`,
+        localizedMessage('写入 Flash 状态寄存器（SPI 0x@0）', opcode.toString(16).padStart(2, '0')),
       );
-      if (ack[0] !== opcode) throw new Error('BK7258 Flash 状态写入响应无效。');
+      if (ack[0] !== opcode) throw new LocalizedError('BK7258 Flash 状态写入响应无效。');
     } catch (error) {
       if (!(error.cause instanceof ReplyTimeout)) throw error;
       // A write may have finished even when its acknowledgement was lost.
@@ -350,7 +351,7 @@ async function setStatus(commands, current, target, separate, readCurrentStatus)
         (wanted[index] & protectionMasks[index]),
     )
   ) {
-    throw new Error('BK7258 Flash 保护状态校验失败。');
+    throw new LocalizedError('BK7258 Flash 保护状态校验失败。');
   }
 }
 
@@ -382,11 +383,11 @@ async function readFlashCrc(commands, address, length) {
       ...word(address),
       ...word(end),
     ]);
-    if (reply.length !== 4) throw new Error('CRC 应答长度无效。');
+    if (reply.length !== 4) throw new LocalizedError('CRC 应答长度无效。');
     return readWord(reply);
   } catch (error) {
     throw commandFailure(
-      `读取 Flash CRC（${range}）`,
+      t('读取 Flash CRC（@0）', range),
       commands,
       receivedBefore,
       error,
@@ -405,7 +406,7 @@ async function eraseFlash(commands, address, size, print) {
         commands,
         block ? 0x0f : 0x0b,
         block ? [0xd8, ...location] : location,
-        `擦除 Flash 地址 ${where}（${size / 1024} KiB）`,
+        localizedMessage('擦除 Flash 地址 @0（@1 KiB）', where, size / 1024),
         block ? 10000 : 7000,
       );
       if (
@@ -413,18 +414,18 @@ async function eraseFlash(commands, address, size, print) {
         (block && reply[0] !== 0xd8) ||
         readWord(reply, addressOffset) !== address
       )
-        throw new Error(`BK7258 擦除响应校验失败，地址 ${where}。`);
+        throw new LocalizedError(localizedMessage('BK7258 擦除响应校验失败，地址 @0。', where));
       return;
     } catch (error) {
       if (!(error.cause instanceof ReplyTimeout) || attempt === 1) throw error;
-      print(`擦除 ${where} 应答超时，正在检查该区域。\n`);
+      print(t('擦除 @0 应答超时，正在检查该区域。\n', where));
       if (
         (await readFlashCrc(commands, address, size)) === blankCrc.get(size)
       ) {
-        print(`已确认 ${where} 区域擦除完成，继续烧录。\n`);
+        print(t('已确认 @0 区域擦除完成，继续烧录。\n', where));
         return;
       }
-      print(`正在重试擦除 ${where} 区域。\n`);
+      print(t('正在重试擦除 @0 区域。\n', where));
     }
   }
 }
@@ -437,21 +438,21 @@ async function writeSector(commands, address, frame, print) {
         commands,
         0x07,
         frame,
-        `写入 Flash 地址 ${where}`,
+        localizedMessage('写入 Flash 地址 @0', where),
       );
       if (reply.length !== 4 || readWord(reply) !== address)
-        throw new Error(`BK7258 写入响应校验失败，地址 ${where}。`);
+        throw new LocalizedError(localizedMessage('BK7258 写入响应校验失败，地址 @0。', where));
       return;
     } catch (error) {
       if (!(error.cause instanceof ReplyTimeout) || attempt === 1) throw error;
-      print(`写入 ${where} 应答超时，正在校验该扇区。\n`);
+      print(t('写入 @0 应答超时，正在校验该扇区。\n', where));
       const actual = await readFlashCrc(commands, address, sectorSize);
       const expected = flashCrc(frame.subarray(4), 0xffffffff);
       if (actual === expected) {
-        print(`已确认 ${where} 扇区写入正确，继续烧录。\n`);
+        print(t('已确认 @0 扇区写入正确，继续烧录。\n', where));
         return;
       }
-      print(`正在重写 ${where} 扇区。\n`);
+      print(t('正在重写 @0 扇区。\n', where));
       if (actual !== blankCrc.get(sectorSize))
         await eraseFlash(commands, address, sectorSize, print);
     }
@@ -484,14 +485,14 @@ async function program(commands, data, progress, print) {
       if (
         (await readFlashCrc(commands, verifyStart, end - verifyStart)) !== crc
       ) {
-        throw new Error(
-          `BK7258 Flash CRC 校验失败，地址 0x${verifyStart.toString(16)}。`,
+        throw new LocalizedError(
+          localizedMessage('BK7258 Flash CRC 校验失败，地址 0x@0。', verifyStart.toString(16)),
         );
       }
       crc = 0xffffffff;
       verifyStart = end;
     }
-    if (address === 0) print('首个 Flash 扇区擦写完成。\n');
+    if (address === 0) print(t('首个 Flash 扇区擦写完成。\n'));
     progress(end / length);
   }
 }
@@ -509,14 +510,14 @@ export async function connectBk7258(port, settings = {}, print) {
   async function reopen(baudRate, drain = false) {
     await commands?.close({ drain });
     commands = undefined;
-    if (closing) throw new Error('烧录串口已断开。');
+    if (closing) throw new LocalizedError('烧录串口已断开。');
     await port.open({ baudRate, bufferSize: serialBufferSize });
     // Chromium on Windows enables DTR and RTS when it opens a serial handle.
     // Release both again so an RTS-wired board can leave reset after reopening.
     if (!closing) await releaseResetSignals(port, print);
     if (closing) {
       await port.close().catch(() => {});
-      throw new Error('烧录串口已断开。');
+      throw new LocalizedError('烧录串口已断开。');
     }
   }
   try {
@@ -524,13 +525,13 @@ export async function connectBk7258(port, settings = {}, print) {
     const info = port.getInfo?.();
     if (info?.usbVendorId != null && info?.usbProductId != null) {
       print(
-        `下载串口 USB VID:PID ${info.usbVendorId.toString(16).padStart(4, '0')}:${info.usbProductId.toString(16).padStart(4, '0')}。\n`,
+        t('下载串口 USB VID:PID @0:@1。\n', info.usbVendorId.toString(16).padStart(4, '0'), info.usbProductId.toString(16).padStart(4, '0')),
       );
     }
     const autoReset = settings.before !== 'manual';
     print(
-      '等待下载握手（DL_UART0）。请在 15 秒内按一下板上的 RESET 键。' +
-        (autoReset ? '如已通过 RTS 自动连接，可跳过此步。' : '') + '\n',
+      t('等待下载握手。请在 15 秒内按一下板上的 RESET 键。') +
+        (autoReset ? t('如已通过 RTS 自动连接，可跳过此步。') : '') + '\n',
     );
     await bootLink(commands, port, print, autoReset);
     const version = await readRegister(commands, 0x44010004);
@@ -542,53 +543,53 @@ export async function connectBk7258(port, settings = {}, print) {
       ((id !== 0x7236 && version >>> 16 !== 0x7236) ||
         (await readRegister(commands, 0x440001f0)) !== 0x20340b10)
     )
-      throw new Error('当前设备的芯片标识不在 BK7258 支持范围内。');
+      throw new LocalizedError('当前设备的芯片标识不在 BK7258 支持范围内。');
 
     async function readFlashId() {
       const identification = await flashCommand(
         commands,
         0x0e,
         [0x9f, 0, 0, 0],
-        '读取 Flash JEDEC',
+        localizedMessage('读取 Flash JEDEC'),
       );
       return identification.length >= 4 ? readWord(identification) >>> 8 : 0;
     }
     const mid = await readFlashId();
     if (!flashProfiles.has(mid))
-      throw new Error(
-        `暂不支持此 BK7258 的 Flash 型号（JEDEC 0x${mid.toString(16)}）。`,
+      throw new LocalizedError(
+        localizedMessage('暂不支持此 BK7258 的 Flash 型号（JEDEC 0x@0）。', mid.toString(16)),
       );
     const capacity = 2 ** (mid >>> 16);
-    print(`BK7258 下载串口已就绪，Flash JEDEC 0x${mid.toString(16)}。\n`);
+    print(t('BK7258 下载串口已就绪，Flash JEDEC 0x@0。\n', mid.toString(16)));
     async function readCurrentStatus() {
       try {
         return await readStatus(commands);
       } catch (error) {
         if (!(error.cause instanceof ReplyTimeout)) throw error;
-        print(`${error.message} 正在以 ${currentBaud} 波特率回读芯片 ID。\n`);
+        print(t('@0 正在以 @1 波特率回读芯片 ID。\n', error.message, currentBaud));
         let actual;
         try {
           actual = await readRegister(commands, 0x44010004, 1000);
         } catch (probeError) {
-          throw new Error(
-            `${error.message} 回读芯片 ID 也失败：${probeError.message} 请重新连接 DL_UART0 后重试。`,
+          throw new LocalizedError(
+            localizedMessage('@0 回读芯片 ID 也失败：@1 请重新连接开发板的 USB 串口后重试。', error, probeError),
             { cause: probeError },
           );
         }
         if (actual !== version)
-          throw new Error('回读的 BK7258 芯片 ID 与连接时不一致，请重新连接。');
-        print('芯片 ID 已确认，重试读取 Flash 状态寄存器。\n');
+          throw new LocalizedError('回读的 BK7258 芯片 ID 与连接时不一致，请重新连接。');
+        print(t('芯片 ID 已确认，重试读取 Flash 状态寄存器。\n'));
         return readStatus(commands);
       }
     }
     async function setWriteBaud(baudrate) {
       if (!bkWriteRates.includes(baudrate))
-        throw new Error('请选择有效的 BK7258 烧录波特率。');
+        throw new LocalizedError('请选择有效的 BK7258 烧录波特率。');
       if (baudrate === currentBaud) return;
       const targetSwitchDelay = 200;
       let switchedCommands;
       try {
-        print(`正在切换 BK7258 烧录波特率到 ${baudrate}。\n`);
+        print(t('正在切换 BK7258 烧录波特率到 @0。\n', baudrate));
         // Web Serial drains the output only when its writable stream closes.
         await commands.send(0x0f, [...word(baudrate), targetSwitchDelay]);
         const sentAt = performance.now();
@@ -597,7 +598,7 @@ export async function connectBk7258(port, settings = {}, print) {
         switchedCommands = commands;
         const reopenMs = Math.round(performance.now() - sentAt);
         print(
-          `浏览器已按 ${baudrate} 重开串口并尝试释放 RTS/DTR（耗时 ${reopenMs} ms），等待设备切速应答。\n`,
+          t('浏览器已按 @0 重开串口并尝试释放 RTS/DTR（耗时 @1 ms），等待设备切速应答。\n', baudrate, reopenMs),
         );
         try {
           await commands.listen(
@@ -608,39 +609,39 @@ export async function connectBk7258(port, settings = {}, print) {
               readWord(data) === baudrate &&
               data[4] === targetSwitchDelay,
           );
-          print('已收到 BK7258 切速应答。\n');
+          print(t('已收到 BK7258 切速应答。\n'));
         } catch (error) {
           if (!(error instanceof ReplyTimeout)) throw error;
-          print('未收到匹配的切速应答，正在用下载握手确认新速率。\n');
+          print(t('未收到匹配的切速应答，正在用下载握手确认新速率。\n'));
           await probeBootrom(commands, 750);
         }
         if ((await readRegister(commands, 0x44010004, 750)) !== version)
-          throw new Error('切换后设备标识不匹配。');
+          throw new LocalizedError('切换后设备标识不匹配。');
         currentBaud = baudrate;
-        print(`已确认 BK7258 烧录波特率 ${baudrate}。\n`);
+        print(t('已确认 BK7258 烧录波特率 @0。\n', baudrate));
       } catch (error) {
         if (switchedCommands) {
-          print(`切速后串口收到 ${switchedCommands.receivedBytes} 字节。\n`);
+          print(t('切速后串口收到 @0 字节。\n', switchedCommands.receivedBytes));
           if (!closing && error instanceof ReplyTimeout) {
             try {
               await reopen(currentBaud);
               commands = serialCommands(port);
               await probeBootrom(commands, 350);
               if ((await readRegister(commands, 0x44010004, 350)) !== version)
-                throw new Error('芯片 ID 不匹配。');
+                throw new LocalizedError('芯片 ID 不匹配。');
               if ((await readFlashId()) !== mid)
-                throw new Error('Flash JEDEC 与连接时不匹配。');
-              print(`回到原速率后仍能在 ${currentBaud} 读到相同芯片 ID 和 Flash JEDEC，将按此速率继续烧录。\n`);
+                throw new LocalizedError('Flash JEDEC 与连接时不匹配。');
+              print(t('回到原速率后仍能在 @0 读到相同芯片 ID 和 Flash JEDEC，将按此速率继续烧录。\n', currentBaud));
               return;
             } catch (probeError) {
               print(
-                `原速率 ${currentBaud} 回探也未确认通信：${probeError.message}\n`,
+                t('原速率 @0 回探也未确认通信：@1\n', currentBaud, probeError.message),
               );
             }
           }
         }
-        throw new Error(
-          `BK7258 无法确认 ${baudrate} 波特率。请调低速率并重新连接。${error.message}`,
+        throw new LocalizedError(
+          localizedMessage('BK7258 无法确认 @0 波特率。请调低速率并重新连接。@1', baudrate, error),
           { cause: error },
         );
       }
@@ -654,7 +655,7 @@ export async function connectBk7258(port, settings = {}, print) {
       async reset() {
         await commands.send(0x0e, [0xa5]);
         await commands.close({ drain: true });
-        print('已发送 BK7258 复位命令。请在串口日志确认固件启动。\n');
+        print(t('已发送 BK7258 复位命令。请在串口日志确认固件启动。\n'));
         return '已发送复位命令。请在串口日志确认启动。';
       },
       async write(images, { baudrate = bootBaud } = {}, progress) {
@@ -664,7 +665,7 @@ export async function connectBk7258(port, settings = {}, print) {
           image.address !== 0 ||
           image.data.length > capacity
         ) {
-          throw new Error(
+          throw new LocalizedError(
             'BK7258 仅接受从 0x0 写入的完整镜像，文件不可超过 Flash 容量。',
           );
         }
@@ -676,12 +677,12 @@ export async function connectBk7258(port, settings = {}, print) {
           (value) => '0x' + value.toString(16).padStart(2, '0'),
         );
         print(
-          `使用 ${currentBaud} 波特率。Flash 状态 SR1=${sr[0]}，SR2=${sr[1]}，正在解除写保护。\n`,
+          t('使用 @0 波特率。Flash 状态 SR1=@1，SR2=@2，正在解除写保护。\n', currentBaud, sr[0], sr[1]),
         );
         let failed;
         try {
           await setStatus(commands, original, [0, 0], separate, readCurrentStatus);
-          print('Flash 写保护检查完成，开始擦写地址 0x0。\n');
+          print(t('Flash 写保护检查完成，开始擦写地址 0x0。\n'));
           await program(commands, image.data, progress, print);
         } catch (error) {
           failed = error;
@@ -696,12 +697,12 @@ export async function connectBk7258(port, settings = {}, print) {
               readCurrentStatus,
             );
           } catch (error) {
-            print(`恢复 Flash 保护失败：${error.message}\n`);
+            print(t('恢复 Flash 保护失败：@0\n', error.message));
             if (!failed)
-              throw new Error(`固件 CRC 校验通过，恢复 Flash 写保护失败：${error.message}`, { cause: error });
+              throw new LocalizedError(localizedMessage('固件 CRC 校验通过，恢复 Flash 写保护失败：@0', error), { cause: error });
           }
         }
-        print('BK7258 写入及 CRC 校验通过。\n');
+        print(t('BK7258 写入及 CRC 校验通过。\n'));
       },
     };
   } catch (error) {

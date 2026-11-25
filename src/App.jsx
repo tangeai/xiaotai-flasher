@@ -1,3 +1,4 @@
+import { getLanguage, releaseLabel, setLanguage, t } from './i18n.mjs';
 import { previewOffset, timestampedPreview } from './serial-preview.mjs';
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { SplitWorkbench } from './SplitWorkbench.jsx';
@@ -49,11 +50,11 @@ function FlashOptions({ settings, change, disabled, official, connected, bk }) {
     : settingFields;
   return (
     <details className="settings-group" id="advanced">
-      <summary>高级设置</summary>
+      <summary>{t('高级设置')}</summary>
       <div className="options">
         {fields.map(([key, label, options, help]) => (
           <label className="field" key={key}>
-            {label}
+            {t(label)}
             <select
               id={key}
               value={settings[key]}
@@ -66,16 +67,16 @@ function FlashOptions({ settings, change, disabled, official, connected, bk }) {
             >
               {options.map(([value, title]) => (
                 <option key={value} value={value}>
-                  {title ?? value}
+                  {t(title ?? value)}
                 </option>
               ))}
             </select>
-            <small>{help}</small>
+            <small>{t(help)}</small>
           </label>
         ))}
         {bk ? (
           <small className="span">
-            下载使用 DL_UART0。日志波特率在右侧串口日志面板单独设置。
+            {t('板端下载接口为 DL_UART0。日志波特率可在串口日志面板单独设置。')}
           </small>
         ) : (
           <>
@@ -83,23 +84,23 @@ function FlashOptions({ settings, change, disabled, official, connected, bk }) {
               checked={settings.compress}
               disabled={disabled}
               onChange={(event) => change('compress', event.target.checked)}
-              help="压缩串口传输的数据，写入 Flash 的内容保持原样。"
+              help={t('压缩串口传输的数据，写入 Flash 的内容保持原样。')}
             >
-              压缩传输
+              {t('压缩传输')}
             </Check>
             <details className="span">
-              <summary>擦除选项</summary>
+              <summary>{t('擦除选项')}</summary>
               <Check
                 checked={settings.eraseAll}
                 disabled={disabled}
                 onChange={(event) => change('eraseAll', event.target.checked)}
-                help="写入前擦除整片 Flash。默认只擦除镜像覆盖的扇区。"
+                help={t('写入前擦除整片 Flash。默认只擦除镜像覆盖的扇区。')}
               >
-                全片擦除
+                {t('全片擦除')}
               </Check>
             </details>
             <small className="span">
-              写入后始终校验。模式、频率和容量覆写只用于对应芯片的启动镜像位置。
+              {t('写入后始终校验。模式、频率和容量覆写只用于对应芯片的启动镜像位置。')}
             </small>
           </>
         )}
@@ -133,8 +134,8 @@ function FirmwarePicker({
   );
   return (
     <>
-      <h2 id="firmware-title">选择固件</h2>
-      <div className="choices row" role="group" aria-label="选择固件来源">
+      <h2 id="firmware-title">{t('选择固件')}</h2>
+      <div className="choices row" role="group" aria-label={t('选择固件来源')}>
         <label>
           <input
             type="radio"
@@ -145,7 +146,7 @@ function FirmwarePicker({
             disabled={busy || !catalog.boards.length}
             onChange={() => choose('official')}
           />{' '}
-          小钛固件
+          {t('小钛固件')}
         </label>
         <label>
           <input
@@ -157,15 +158,15 @@ function FirmwarePicker({
             disabled={busy}
             onChange={() => choose('local')}
           />{' '}
-          本地 BIN
+          {t('本地 BIN')}
         </label>
       </div>
       <small id="catalog-status" role="status">
-        {catalog.message}
+        {t(catalog.message)}
       </small>
       <div id="official" className="options" hidden={origin !== 'official'}>
         <label className="field">
-          开发板型号
+          {t('开发板型号')}
           <select
             id="board"
             value={selection.slug}
@@ -182,14 +183,14 @@ function FirmwarePicker({
           >
             {catalog.boards.map(({ slug, model }) => (
               <option key={slug} value={slug}>
-                {model}
+                {t(model)}
               </option>
             ))}
           </select>
-          <small>按完整板卡型号选择固件。</small>
+          <small>{t('按完整板卡型号选择固件。')}</small>
         </label>
         <label className="field">
-          固件版本
+          {t('固件版本')}
           <select
             id="version"
             value={selection.version}
@@ -198,26 +199,26 @@ function FirmwarePicker({
           >
             {board?.versions.map(({ version, recommended }) => (
               <option key={version} value={version}>
-                {version}
-                {recommended ? '（推荐）' : ''}
+                {releaseLabel(version)}
+                {recommended ? t('（推荐）') : ''}
               </option>
             ))}
           </select>
           <small>
             {release?.embedded_version
-              ? `设备上报版本：${release.embedded_version}`
-              : '选择要写入的已发布版本。'}
+              ? t('固件内置版本：@0', release.embedded_version)
+              : t('选择要写入的已发布版本。')}
           </small>
         </label>
         {board && (
           <p className="callout span" id="manifest">
-            {board.chip} · 完整镜像 · 起始地址 0x0
+            {board.chip} {t('· 完整镜像 · 起始地址 0x0')}
           </p>
         )}
       </div>
       <div hidden={origin !== 'local'}>
         <label className="field" hidden={!bk && selection.segmented}>
-          完整镜像 · 起始地址 <code>0x0</code>
+          {t('完整镜像 · 起始地址')} <code>0x0</code>
           <input
             type="file"
             id="merged-bin"
@@ -227,25 +228,25 @@ function FirmwarePicker({
           />
           <small>
             {bk
-              ? '选择适配开发板的 BK7258 原始 all-app.bin。'
-              : '选择适配开发板的完整 BIN。'}
+              ? t('选择适配开发板的 BK7258 原始 all-app.bin。')
+              : t('选择适配开发板的完整 BIN。')}
           </small>
         </label>
         <details className="settings-group" id="segments" hidden={bk}>
-          <summary>分段烧录</summary>
+          <summary>{t('分段烧录')}</summary>
           <Check
             checked={selection.segmented}
             disabled={busy}
             onChange={(event) => change({ segmented: event.target.checked })}
-            help="对照固件说明填写每个 BIN 的起始地址。"
+            help={t('对照固件说明填写每个 BIN 的起始地址。')}
           >
-            使用分段固件
+            {t('使用分段固件')}
           </Check>
           <div hidden={!selection.segmented}>
             {selection.segments.map(({ id, offset }) => (
               <div className="firmware-row" key={id}>
                 <label className="field">
-                  固件文件
+                  {t('固件文件')}
                   <input
                     type="file"
                     accept=".bin"
@@ -254,10 +255,10 @@ function FirmwarePicker({
                       changeSegment(id, { file: event.target.files[0] })
                     }
                   />
-                  <small>要写入的二进制镜像。</small>
+                  <small>{t('要写入的二进制镜像。')}</small>
                 </label>
                 <label className="field">
-                  起始地址
+                  {t('起始地址')}
                   <input
                     type="text"
                     value={offset}
@@ -267,7 +268,7 @@ function FirmwarePicker({
                       changeSegment(id, { offset: event.target.value })
                     }
                   />
-                  <small>该 BIN 在 Flash 的偏移。</small>
+                  <small>{t('该 BIN 在 Flash 的偏移。')}</small>
                 </label>
                 <button
                   className="btn remove"
@@ -281,7 +282,7 @@ function FirmwarePicker({
                     })
                   }
                 >
-                  移除
+                  {t('移除')}
                 </button>
               </div>
             ))}
@@ -293,7 +294,7 @@ function FirmwarePicker({
                 change({ segments: [...selection.segments, newSegment()] })
               }
             >
-              添加 BIN
+              {t('添加 BIN')}
             </button>
           </div>
         </details>
@@ -362,37 +363,37 @@ function CommandForm({ workbench, platform }) {
   }
 
   return (
-    <form aria-label="串口发送" className="command-row" onSubmit={(event) => {
+    <form aria-label={t('串口发送')} className="command-row" onSubmit={(event) => {
       event.preventDefault();
       workbench.sendCommand(command, format, ending);
     }}>
-      <select aria-label="发送格式" value={format} onChange={(event) => { browsing.current = null; setFormat(event.target.value); }}>
-        <option value="text">文本</option>
+      <select aria-label={t('发送格式')} value={format} onChange={(event) => { browsing.current = null; setFormat(event.target.value); }}>
+        <option value="text">{t('文本')}</option>
         <option value="hex">HEX</option>
       </select>
       <input
         type="text"
-        aria-label="串口指令"
-        placeholder={format === 'hex' ? '例如 AA 01 FF' : '输入串口指令'}
+        aria-label={t('串口指令')}
+        placeholder={format === 'hex' ? t('例如 AA 01 FF') : t('输入串口指令')}
         autoComplete="off"
         spellCheck={false}
         value={command}
-        title="↑ / ↓ 调出本次连接成功发送的指令"
+        title={t('↑ / ↓ 调出本次连接成功发送的指令')}
         onKeyDown={recallCommand}
         onChange={(event) => { browsing.current = null; setDrafts({ ...drafts, [format]: event.target.value }); }}
       />
-      {format === 'text' && <select aria-label="指令行尾" title="文本行尾" value={ending} onChange={(event) => { browsing.current = null; setEnding(event.target.value); }}>
+      {format === 'text' && <select aria-label={t('指令行尾')} title={t('文本行尾')} value={ending} onChange={(event) => { browsing.current = null; setEnding(event.target.value); }}>
         <option value={'\r\n'}>CR+LF</option>
         <option value={'\n'}>LF</option>
         <option value={'\r'}>CR</option>
-        <option value="">无行尾</option>
+        <option value="">{t('无行尾')}</option>
       </select>}
       <button className="btn primary" type="submit" disabled={disabled || !command}>
-        发送指令
+        {t('发送指令')}
       </button>
       {platform === 'esp32' && workbench.monitoring && (
         <button className="btn" type="button" onClick={workbench.testAt} disabled={disabled}
-          title="发送 AT 加回车，等待设备回复">测试 AT</button>
+          title={t('发送 AT 加回车，等待设备回复')}>{t('测试 AT')}</button>
       )}
     </form>
   );
@@ -506,16 +507,16 @@ function LogConsole({ workbench, rate, setRate, platform }) {
   }
 
   const taskStatus =
-    { writing: '烧录中', success: '校验通过', failed: '烧录失败' }[
+    { writing: t('烧录中'), success: t('校验通过'), failed: t('烧录失败') }[
       progress?.outcome
-    ] || '等待烧录';
+    ] || t('等待烧录');
   return (
-    <section className="console" aria-label="日志">
+    <section className="console" aria-label={t('日志')}>
       <div className="console-head row spread">
         <div
           className="tabs"
           role="tablist"
-          aria-label="日志类型"
+          aria-label={t('日志类型')}
           onKeyDown={changeWithKeyboard}
         >
           <button
@@ -528,7 +529,7 @@ function LogConsole({ workbench, rate, setRate, platform }) {
             tabIndex={flashTab ? -1 : 0}
             onClick={() => workbench.setTab('log')}
           >
-            串口日志
+            {t('串口日志')}
           </button>
           <button
             ref={processTab}
@@ -540,11 +541,11 @@ function LogConsole({ workbench, rate, setRate, platform }) {
             tabIndex={flashTab ? 0 : -1}
             onClick={() => workbench.setTab('flash')}
           >
-            烧录过程
+            {t('烧录过程')}
           </button>
         </div>
         <span className="console-status" data-outcome={flashTab ? progress?.outcome : undefined} role="status">
-          {flashTab ? taskStatus : monitoring ? (monitorReceived ? '已收到日志' : '等待输出') : '未连接'}
+          {flashTab ? taskStatus : monitoring ? (monitorReceived ? t('已收到日志') : t('等待输出')) : t('未连接')}
         </span>
       </div>
       <div
@@ -572,10 +573,10 @@ function LogConsole({ workbench, rate, setRate, platform }) {
               disabled={!serialAvailable || busy}
               onClick={() => workbench.toggleMonitor(rate, platform)}
             >
-              {monitoring ? '断开日志串口' : '连接日志串口'}
+              {monitoring ? t('断开日志串口') : t('连接日志串口')}
             </button>
             <label className="row">
-              日志波特率
+              {t('日志波特率')}
               <select
                 value={rate}
                 onChange={(event) => setRate(event.target.value)}
@@ -590,13 +591,13 @@ function LogConsole({ workbench, rate, setRate, platform }) {
           </div>
           <div className="row log-view-controls">
             <Check checked={showTime} onChange={(event) => { setMatchAnchor(0); setShowTime(event.target.checked); }}>
-              时间
+              {t('时间戳')}
             </Check>
             <Check checked={!paused && !finding} disabled={finding} onChange={(event) => setPaused(!event.target.checked)}>
-              自动滚动
+              {t('自动滚动')}
             </Check>
-            <button type="button" className="btn find-toggle" ref={findButton} aria-label="查找日志"
-              title="查找日志 (Ctrl / ⌘ + F)" aria-expanded={finding}
+            <button type="button" className="btn find-toggle" ref={findButton} aria-label={t('查找日志')}
+              title={t('查找日志 (Ctrl / ⌘ + F)')} aria-expanded={finding}
               onClick={() => finding ? closeFind() : setFinding(true)}>
               <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                 <circle cx="8" cy="8" r="5.5" /><path d="m12 12 5 5" />
@@ -604,12 +605,12 @@ function LogConsole({ workbench, rate, setRate, platform }) {
             </button>
           </div>
           <small className="sr-only" id="log-rate-help">
-            UART 读取速率需与固件控制台配置一致。原生 USB 日志请按板卡说明连接。
+            {t('UART 读取速率需与固件控制台配置一致。原生 USB 日志请按板卡说明连接。')}
           </small>
         </div>
         {finding && (
-          <div className="row log-find" role="search" aria-label="查找串口日志">
-            <input ref={findField} aria-label="查找内容" placeholder="查找日志" value={query}
+          <div className="row log-find" role="search" aria-label={t('查找串口日志')}>
+            <input ref={findField} aria-label={t('查找内容')} placeholder={t('查找日志')} value={query}
               onChange={(event) => { setQuery(event.target.value); setMatchAnchor(0); }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
@@ -617,19 +618,19 @@ function LogConsole({ workbench, rate, setRate, platform }) {
                   stepMatch(event.shiftKey ? -1 : 1);
                 }
               }} />
-            <small role="status">{query && (matches.length ? (selected + 1) + ' / ' + matches.length : '无匹配')}</small>
-            <button className="btn" type="button" aria-label="上一处" title="上一处" disabled={!matches.length} onClick={() => stepMatch(-1)}>↑</button>
-            <button className="btn" type="button" aria-label="下一处" title="下一处" disabled={!matches.length} onClick={() => stepMatch(1)}>↓</button>
-            <button className="btn" type="button" aria-label="关闭查找" title="关闭查找" onClick={closeFind}>×</button>
+            <small role="status">{query && (matches.length ? (selected + 1) + ' / ' + matches.length : t('无匹配'))}</small>
+            <button className="btn" type="button" aria-label={t('上一处')} title={t('上一处')} disabled={!matches.length} onClick={() => stepMatch(-1)}>↑</button>
+            <button className="btn" type="button" aria-label={t('下一处')} title={t('下一处')} disabled={!matches.length} onClick={() => stepMatch(1)}>↓</button>
+            <button className="btn" type="button" aria-label={t('关闭查找')} title={t('关闭查找')} onClick={closeFind}>×</button>
           </div>
         )}
         <pre
           ref={deviceOutput}
           id="monitor-output"
-          aria-label="设备日志输出"
+          aria-label={t('设备日志输出')}
           tabIndex={0}
         >
-          {bootLog ? <SerialLog text={bootLog} matchStart={matchStart} matchLength={query.length} /> : (monitoring ? '等待设备日志…' : '连接后显示设备日志。')}
+          {bootLog ? <SerialLog text={bootLog} matchStart={matchStart} matchLength={query.length} /> : (monitoring ? t('等待设备日志…') : t('连接后显示设备日志。'))}
         </pre>
         <div className="console-bottom">
           <CommandForm workbench={workbench} platform={platform} />
@@ -640,7 +641,7 @@ function LogConsole({ workbench, rate, setRate, platform }) {
               disabled={!bootLog}
               onClick={() => copyLog(bootLog)}
             >
-              复制日志
+              {t('复制日志')}
             </button>
             <button
               className="btn"
@@ -648,7 +649,7 @@ function LogConsole({ workbench, rate, setRate, platform }) {
               disabled={!bootLog}
               onClick={downloadLog}
             >
-              下载日志
+              {t('下载日志')}
             </button>
             {typeof window.showDirectoryPicker === 'function' && (
               <button
@@ -657,7 +658,7 @@ function LogConsole({ workbench, rate, setRate, platform }) {
                 disabled={!monitoring || busy}
                 onClick={workbench.toggleRecording}
               >
-                {workbench.recording ? '停止记录' : '记录到文件夹'}
+                {workbench.recording ? t('停止记录') : t('记录到文件夹')}
               </button>
             )}
             <button
@@ -666,14 +667,14 @@ function LogConsole({ workbench, rate, setRate, platform }) {
               disabled={!bootLog}
               onClick={() => { setMatchAnchor(0); workbench.clearLog(); }}
             >
-              清空日志
+              {t('清空日志')}
             </button>
           </div>
         </div>
         {complete && (
           <p id="monitor-setup" className="callout">
-            完整镜像已写入。{platform === 'lierda' ? '设备通过蜂窝网络上线后，请到' : '请重新配置设备 Wi‑Fi，再到'}
-            <a href="https://xiaotai.chat/devices">设备管理</a>{platform === 'lierda' ? '检查绑定状态。' : '绑定。'}
+            {t('完整镜像已写入。')}{platform === 'lierda' ? t('设备通过蜂窝网络上线后，请到') : t('请重新配置设备 Wi‑Fi，再到')}
+            <a href="https://xiaotai.chat/devices">{t('设备管理')}</a>{platform === 'lierda' ? t('检查绑定状态。') : t('绑定。')}
           </p>
         )}
       </div>
@@ -687,10 +688,10 @@ function LogConsole({ workbench, rate, setRate, platform }) {
         <pre
           ref={flashOutput}
           id="flash-output"
-          aria-label="烧录过程输出"
+          aria-label={t('烧录过程输出')}
           tabIndex={0}
         >
-          {flashLog || '等待开始烧录。'}
+          {flashLog || t('等待开始烧录。')}
         </pre>
         <div className="row log-actions">
           <button
@@ -699,12 +700,12 @@ function LogConsole({ workbench, rate, setRate, platform }) {
             disabled={!flashLog}
             onClick={() => copyLog(flashLog)}
           >
-            复制烧录日志
+            {t('复制烧录日志')}
           </button>
         </div>
       </div>
-      <small className="console-notice" role="status" title={flashTab ? flashCopyStatus : monitorMessage}>
-        {flashTab ? flashCopyStatus : monitorMessage}
+      <small className="console-notice" role="status" title={flashTab ? t(flashCopyStatus) : monitorMessage}>
+        {flashTab ? t(flashCopyStatus) : monitorMessage}
       </small>
     </section>
   );
@@ -718,33 +719,33 @@ function FlashSummary({ firmware, chip }) {
   return (
     <dl className="flash-summary">
       <div>
-        <dt>目标芯片</dt>
-        <dd>{chip ?? '设备已断开'}</dd>
+        <dt>{t('目标芯片')}</dt>
+        <dd>{chip ?? t('设备已断开')}</dd>
       </div>
       {official && (
         <>
           <div>
-            <dt>开发板</dt>
-            <dd>{firmware.boardModel}</dd>
+            <dt>{t('开发板')}</dt>
+            <dd>{t(firmware.boardModel)}</dd>
           </div>
           <div>
-            <dt>固件版本</dt>
+            <dt>{t('固件版本')}</dt>
             <dd>
-              {firmware.release.version}
+              {releaseLabel(firmware.release.version)}
               {firmware.release.embedded_version && (
-                <small>设备上报版本：{firmware.release.embedded_version}</small>
+                <small>{t('固件内置版本：')}{firmware.release.embedded_version}</small>
               )}
             </dd>
           </div>
         </>
       )}
       <div>
-        <dt>烧录方式</dt>
-        <dd>{segmented ? '分段烧录' : '完整镜像'}</dd>
+        <dt>{t('烧录方式')}</dt>
+        <dd>{segmented ? t('分段烧录') : t('完整镜像')}</dd>
       </div>
       {segmented ? (
         <div>
-          <dt>文件及地址</dt>
+          <dt>{t('文件及地址')}</dt>
           <dd>
             <ul className="flash-summary-files">
               {firmware.entries.map(({ name, address }) => (
@@ -754,22 +755,22 @@ function FlashSummary({ firmware, chip }) {
                 </li>
               ))}
             </ul>
-            <small>各地址是相对 Flash 起始位置的字节偏移。</small>
+            <small>{t('各地址是相对 Flash 起始位置的字节偏移。')}</small>
           </dd>
         </div>
       ) : (
         <>
           {!official && (
             <div>
-              <dt>BIN 文件</dt>
+              <dt>{t('BIN 文件')}</dt>
               <dd>{firmware.entries[0].name}</dd>
             </div>
           )}
           <div>
-            <dt>烧录起始地址</dt>
+            <dt>{t('烧录起始地址')}</dt>
             <dd>
               <code>0x{address.toString(16)}</code>
-              <small>从 Flash 起始位置写入，偏移 0 字节。</small>
+              <small>{t('从 Flash 起始位置写入，偏移 0 字节。')}</small>
             </dd>
           </div>
         </>
@@ -787,69 +788,64 @@ function HelpDialog({ dialogRef, onClose }) {
       onClose={onClose}
     >
       <div className="row spread">
-        <h2 id="help-title">FAQ</h2>
+        <h2 id="help-title">{t('常见问题')}</h2>
         <form method="dialog">
           <button className="btn" type="submit">
-            关闭
+            {t('关闭')}
           </button>
         </form>
       </div>
       <p className="actions">
-        用桌面 Chrome 或 Edge 在 HTTPS 页面打开工作台，并使用支持数据传输的 USB
-        线。
+        {t('用桌面 Chrome 或 Edge 在 HTTPS 页面打开工作台，并使用支持数据传输的 USB 线。')}
       </p>
       <details className="settings-group">
-        <summary>找不到串口</summary>
-        <p>列表中已有开发板串口时，直接选择即可。若串口被占用，请关闭其他串口工具。</p>
+        <summary>{t('找不到串口')}</summary>
+        <p>{t('列表中已有开发板串口时，直接选择即可。若串口被占用，请关闭其他串口工具。')}</p>
         <dl className="driver-help">
           <dt>Windows</dt>
           <dd>
-            在设备管理器中查看 COM 口。若提示缺少驱动，CH340 / CH341 可用
-            <a href="https://www.wch-ic.com/downloads/ch341ser_exe.html" target="_blank" rel="noreferrer">沁恒驱动</a>。
+            {t('在设备管理器中查看 COM 口。若提示缺少驱动，CH340 / CH341 可用')}
+            <a href="https://www.wch-ic.com/downloads/ch341ser_exe.html" target="_blank" rel="noreferrer">{t('沁恒驱动')}</a>{t('。')}
           </dd>
           <dt>macOS</dt>
           <dd>
-            若系统询问是否允许配件连接，请点「允许」。若仍找不到 CH340 / CH341 串口，可尝试
-            <a href="https://www.wch-ic.com/downloads/CH341SER_MAC_ZIP.html" target="_blank" rel="noreferrer">沁恒驱动</a>。
+            {t('若系统询问是否允许配件连接，请点「允许」。若仍找不到 CH340 / CH341 串口，可尝试')}
+            <a href="https://www.wch-ic.com/downloads/CH341SER_MAC_ZIP.html" target="_blank" rel="noreferrer">{t('沁恒驱动')}</a>{t('。')}
           </dd>
         </dl>
       </details>
       <details className="settings-group">
-        <summary>无法进入下载模式</summary>
+        <summary>{t('无法进入下载模式')}</summary>
         <p>
-          ESP32 按板卡指南操作 BOOT / RESET
-          键，再使用高级设置里的「手动进入下载模式」。写入不稳定时可把烧录波特率降到
-          115200。
+          {t('ESP32 按板卡指南操作 BOOT / RESET 键，再使用高级设置里的「手动进入下载模式」。写入不稳定时可把烧录波特率降到 115200。')}
         </p>
         <p className="actions">
-          BK7258 请选择 DL_UART0。看到「等待下载握手」时，在 15 秒内按一下板上的 RESET 键。
-          若已显示「下载串口已就绪」，可直接开始烧录。
+          {t('BK7258：选择连接开发板的 USB 串口。例如，立创实战派 BK7258 在 Windows 上可能显示为 USB Serial (COM19)，COM 号因电脑而异。若有多个串口，可拔插开发板，查看哪个串口随之消失和出现。看到「等待下载握手」时，在 15 秒内按一下板上的 RESET 键。若已显示「下载串口已就绪」，可直接开始烧录。')}
         </p>
       </details>
       <details className="settings-group">
-        <summary>看不到设备日志</summary>
+        <summary>{t('看不到设备日志')}</summary>
         <p>
-          确认固件的日志输出接口和波特率。若重启后设备的串口变化，请重新选择日志串口。
-          BK7258 的 UART0 日志默认使用 115200 波特率。
+          {t('确认固件的日志输出接口和波特率。若重启后设备的串口变化，请重新选择日志串口。 BK7258 的 UART0 日志默认使用 115200 波特率。')}
         </p>
       </details>
       <details className="settings-group">
-        <summary>乐鑫参数文档</summary>
+        <summary>{t('乐鑫参数文档')}</summary>
         <p>
           <a href="https://docs.espressif.com/projects/esptool/en/latest/esp32/esptool/basic-commands.html">
-            烧录参数
+            {t('烧录参数')}
           </a>{' '}
           ·{' '}
           <a href="https://docs.espressif.com/projects/esptool/en/latest/esp32/esptool/flash-modes.html">
-            Flash 配置
+            {t('Flash 配置')}
           </a>{' '}
           ·{' '}
           <a href="https://docs.espressif.com/projects/esptool/en/latest/esp32/esptool/advanced-options.html">
-            复位配置
+            {t('复位配置')}
           </a>{' '}
           ·{' '}
           <a href="https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/kconfig-reference.html#config-esp-console-uart-baudrate">
-            UART 日志设置
+            {t('UART 日志设置')}
           </a>
         </p>
       </details>
@@ -858,6 +854,12 @@ function HelpDialog({ dialogRef, onClose }) {
 }
 
 export function App() {
+  const [language, updateLanguage] = useState(getLanguage);
+  useLayoutEffect(() => {
+    document.documentElement.lang = language;
+    document.title = t('小钛') + ' · ' + t('固件烧录与串口日志工作台');
+  }, [language]);
+
   const workbench = useWorkbench();
   const [catalog, setCatalog] = useState({
     boards: [],
@@ -879,7 +881,6 @@ export function App() {
   const lierdaRelease = lierdaReleases?.find(({ version }) => version === lierdaSelection.versions[lierdaBoard.model])
     ?? lierdaReleases?.find(({ recommended }) => recommended)
     ?? lierdaReleases?.[0];
-  const lierdaPreflight = useLierdaPreflight(lierdaSelection, lierda);
   const [selection, setSelection] = useState(() => ({
     slug: '',
     version: '',
@@ -914,6 +915,10 @@ export function App() {
     serialAvailable,
   } = workbench;
   const detectedLierdaBoard = lierdaBoards.find(({ model }) => model === device?.lierdaModel);
+  const localPackage = lierdaSelection.origin === 'local';
+  const targetBoard = localPackage ? detectedLierdaBoard : lierdaBoard;
+  const targetSelection = { ...lierdaSelection, model: targetBoard?.model };
+  const lierdaPreflight = useLierdaPreflight(targetSelection, lierda && Boolean(targetBoard));
   const pendingLierdaMismatch = pending?.kind === 'lierda' &&
     (pending.targetDevice !== device || !matchesLierdaDevice(pending, device));
 
@@ -965,7 +970,6 @@ export function App() {
       return {
         ...current,
         model: detectedLierdaBoard.model,
-        file: null,
       };
     });
   }, [detectedLierdaBoard]);
@@ -1040,29 +1044,29 @@ export function App() {
   let ready;
   let readinessMessage;
   if (!serialAvailable)
-    readinessMessage = '请在桌面 Chrome 或 Edge 中打开 HTTPS 烧录页。';
+    readinessMessage = t('请在桌面 Chrome 或 Edge 中打开 HTTPS 烧录页。');
   else if (lierda) {
     if (!device) {
-      readinessMessage = '先连接设备，再选择固件。';
-    } else if (!matchesLierdaDevice(lierdaBoard, device)) {
+      readinessMessage = localPackage ? t('连接设备后将自动识别板型并校验固件包。') : t('先连接设备，再选择固件。');
+    } else if (!targetBoard || !matchesLierdaDevice(targetBoard, device)) {
       readinessMessage = detectedLierdaBoard && detectedLierdaBoard !== lierdaBoard
-        ? `已连接 ${detectedLierdaBoard.name}，请选择对应板型。`
-        : '设备芯片或 Flash 容量与所选板型不匹配。';
+        ? t('已连接 @0，请选择对应板型。', t(detectedLierdaBoard.name))
+        : t('设备芯片或 Flash 容量与所选板型不匹配。');
     } else {
       try {
         const firmware = prepareLierdaFirmware(
-          { ...lierdaSelection, selectedRelease: lierdaRelease },
+          { ...targetSelection, selectedRelease: lierdaRelease },
           device.capacity,
         );
         if (lierdaPreflight === 'checking') {
-          readinessMessage = '正在校验固件…';
+          readinessMessage = t('正在校验固件…');
         } else if (lierdaPreflight === 'invalid') {
           readinessMessage = firmware.model === 'pro-f9'
-            ? '固件与 NT26F9D0（F9D_D）不匹配。'
-            : '固件与利尔达 Lite 不匹配。';
+            ? t('固件与 NT26F9D0（F9D_D）不匹配。')
+            : t('固件与利尔达 Lite 不匹配。');
         } else {
           ready = { ...firmware, targetDevice: device };
-          readinessMessage = '固件已就绪。';
+          readinessMessage = t('固件已就绪。');
         }
       } catch (error) {
         readinessMessage = error.message;
@@ -1080,20 +1084,20 @@ export function App() {
         },
         device?.capacity,
       );
-      if (!device) readinessMessage = '连接开发板后即可开始烧录。';
+      if (!device) readinessMessage = t('连接开发板后即可开始烧录。');
       else if (firmware.chip !== 'auto' && firmware.chip !== device.chip) {
-        readinessMessage = `固件需要 ${firmware.chip}，当前设备为 ${device.chip}。`;
+        readinessMessage = t('固件需要 @0，当前设备为 @1。', firmware.chip, device.chip);
       } else if (
         firmware.flashBytes &&
         firmware.flashBytes !== device.capacity
       ) {
-        readinessMessage = `固件需要 ${firmware.flashBytes / 1048576} MiB Flash，当前设备为 ${device.capacity / 1048576} MiB。`;
+        readinessMessage = t('固件需要 @0 MiB Flash，当前设备为 @1 MiB。', firmware.flashBytes / 1048576, device.capacity / 1048576);
       } else {
         ready = firmware;
         readinessMessage =
           firmware.kind === 'segments'
-            ? '固件和串口已就绪。'
-            : '完整镜像将从 0x0 写入。';
+            ? t('固件和串口已就绪。')
+            : t('完整镜像将从 0x0 写入。');
       }
     } catch (error) {
       readinessMessage = error.message;
@@ -1164,7 +1168,7 @@ export function App() {
   return (
     <>
       <header className="app-header">
-        <a className="brand" href="https://xiaotai.chat/" aria-label="小钛官网">
+        <a className="brand" href="https://xiaotai.chat/" aria-label={t('小钛官网')}>
           <img
             className="brand-mark"
             src={brandMark}
@@ -1172,32 +1176,53 @@ export function App() {
             width="32"
             height="32"
           />
-          <span className="brand-name">小钛</span>
+          <span className="brand-name">{t('小钛')}</span>
         </a>
         <div className="app-title">
-          <h1>固件烧录与串口日志工作台</h1>
+          <h1>{t('固件烧录与串口日志工作台')}</h1>
           <p className="muted">
-            {lierda
-              ? '适用芯片：EC718PM、EC718HM'
-              : '适用芯片：ESP32、S2、S3、C2、C3、C5、C6、H2、P4、BK7258'}
+            {t('适用芯片：ESP32、S2、S3、C2、C3、C5、C6、H2、P4、BK7258、EC718PM、EC718HM')}
           </p>
         </div>
-        <nav className="header-actions" aria-label="工作台工具">
+        <nav className="header-actions" aria-label={t('工作台工具')}>
+          <label className="language-control">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" /><ellipse cx="12" cy="12" rx="4" ry="9" /><path d="M3 12h18" />
+            </svg>
+            <select aria-label="语言 / Language" value={language} onChange={(event) => {
+              setLanguage(event.target.value);
+              updateLanguage(getLanguage());
+            }}>
+              <option lang="zh-CN" value="zh-CN">中文</option>
+              <option lang="en" value="en">English</option>
+            </select>
+          </label>
           <button
-            className="btn subtle"
             type="button"
+            aria-label={t('常见问题')}
+            title={t('常见问题')}
             aria-controls="troubleshooting"
+            aria-haspopup="dialog"
             aria-expanded={helpOpen}
             onClick={() => {
               helpDialog.current.showModal();
               setHelpOpen(true);
             }}
           >
-            FAQ
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M9.5 9a2.6 2.6 0 0 1 5 .9c0 2-2.5 2.2-2.5 4.1m0 2.6v.1" />
+            </svg>
           </button>
           {document.fullscreenEnabled && (
-            <button className="btn" type="button" onClick={toggleFullscreen}>
-              {fullscreen ? '退出全屏' : '全屏'}
+            <button type="button" onClick={toggleFullscreen}
+              aria-label={fullscreen ? t('退出全屏') : t('全屏')}
+              title={fullscreen ? t('退出全屏') : t('全屏')}>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d={fullscreen
+                  ? 'M4 9h5V4m6 0v5h5m0 6h-5v5m-6 0v-5H4'
+                  : 'M9 4H4v5m11-5h5v5m0 6v5h-5m-6 0H4v-5'} />
+              </svg>
             </button>
           )}
         </nav>
@@ -1205,21 +1230,21 @@ export function App() {
       <main className="app">
         {!serialAvailable && (
           <p className="callout" role="status">
-            当前环境无法访问串口，请使用桌面 Chrome 或 Edge 打开 HTTPS 烧录页。
+            {t('当前环境无法访问串口，请使用桌面 Chrome 或 Edge 打开 HTTPS 烧录页。')}
           </p>
         )}
-        <section className="device-bar row" aria-label="烧录设备连接">
-          <h2>烧录设备</h2>
+        <section className="device-bar row" aria-label={t('烧录设备连接')}>
+          <h2>{t('烧录设备')}</h2>
           <label className="row">
-            芯片平台
+            {t('芯片平台')}
             <select
               value={platform}
               disabled={busy || Boolean(device) || workbench.monitoring}
               onChange={(event) => changePlatform(event.target.value)}
             >
-              <option value="esp32">乐鑫 Espressif（ESP32 系列）</option>
-              <option value="bk7258">博通集成 Beken（BK7258）</option>
-              <option value="lierda">利尔达（移芯PM HM系列）</option>
+              <option value="esp32">{t('乐鑫 Espressif（ESP32 系列）')}</option>
+              <option value="bk7258">{t('博通集成 Beken（BK7258）')}</option>
+              <option value="lierda">{t('利尔达（移芯PM HM系列）')}</option>
             </select>
           </label>
           <p
@@ -1235,7 +1260,7 @@ export function App() {
               disabled={busy}
               onClick={workbench.disconnect}
             >
-              断开连接
+              {t('断开连接')}
             </button>
           ) : (
             <>
@@ -1246,7 +1271,7 @@ export function App() {
                 aria-describedby={showResetHint ? 'bk-reset-hint' : lierda && !busy ? 'lierda-port-hint' : undefined}
                 onClick={() => connectDevice(!selectLierdaDownload && canReconnect)}
               >
-                {selectLierdaDownload ? '选择下载口' : canReconnect ? '重新连接' : '连接设备'}
+                {selectLierdaDownload ? t('选择下载口') : canReconnect ? t('重新连接') : t('连接设备')}
               </button>
               {(canReconnect || (lierda && deviceError)) && !selectLierdaDownload && (
                 <button
@@ -1255,21 +1280,21 @@ export function App() {
                   disabled={busy || !serialAvailable}
                   onClick={() => connectDevice(false, true)}
                 >
-                  选择其他串口
+                  {t('选择其他串口')}
                 </button>
               )}
             </>
           )}
           {showResetHint && (
             <p id="bk-reset-hint" className="reset-hint">
-              选择 DL_UART0，看到「等待下载握手」时按一下 <kbd>RESET</kbd>。已自动连接可跳过。
+              {t('选择开发板对应的 USB 串口（如 USB Serial (COM…)）。看到「等待下载握手」时按一下')} <kbd>RESET</kbd>{t('。已自动连接可跳过。')}
             </p>
           )}
           {lierda && !device && !busy && (
             <p id="lierda-port-hint" className="reset-hint">
               {selectLierdaDownload
-                ? '请在 Chrome 中选择 Lierda QDLoader Port。'
-                : '优先连接已授权的利尔达串口。弹窗中请选择 Mobile AT Interface 或 QDLoader。'}
+                ? t('请在 Chrome 中选择 Lierda QDLoader Port。')
+                : t('优先连接已授权的利尔达串口。弹窗中请选择 Mobile AT Interface 或 QDLoader。')}
             </p>
           )}
         </section>
@@ -1313,7 +1338,7 @@ export function App() {
               )}
               {lierda && flashBackup && (
                 <button className="btn actions" type="button" disabled={busy} onClick={workbench.downloadFlashBackup}>
-                  下载烧录前备份
+                  {t('下载烧录前备份')}
                 </button>
               )}
               {completed && (
@@ -1321,8 +1346,8 @@ export function App() {
                   {complete && (
                     <p className="callout">
                       {lierda
-                        ? '完整镜像已写入。请确认设备已通过蜂窝网络上线，并检查绑定状态。'
-                        : '完整镜像已写入。请重新配网和绑定设备。'}
+                        ? t('完整镜像已写入。请确认设备已通过蜂窝网络上线，并检查绑定状态。')
+                        : t('完整镜像已写入。请重新配网和绑定设备。')}
                     </p>
                   )}
                   <div className="row actions">
@@ -1332,17 +1357,17 @@ export function App() {
                       disabled={busy}
                       onClick={() => workbench.showDeviceLog(rate, platform)}
                     >
-                      查看设备日志
+                      {t('查看设备日志')}
                     </button>
-                    <a href="https://xiaotai.chat/devices">前往设备管理</a>
+                    <a href="https://xiaotai.chat/devices">{t('前往设备管理')}</a>
                   </div>
                 </div>
               )}
             </div>
-            <section className="launch" aria-label="执行烧录">
+            <section className="launch" aria-label={t('执行烧录')}>
               <div className="row spread">
                 <p className="muted" id="start-hint" aria-live="polite">
-                  {busy ? '正在处理，请保持 USB 连接。' : readinessMessage}
+                  {busy ? t('正在处理，请保持 USB 连接。') : readinessMessage}
                 </p>
                 <button
                   className="btn primary"
@@ -1353,8 +1378,8 @@ export function App() {
                   onClick={() => setPending(ready)}
                 >
                   {busy && progress?.outcome === 'writing'
-                    ? '烧录中…'
-                    : '开始烧录'}
+                    ? t('烧录中…')
+                    : t('开始烧录')}
                 </button>
               </div>
               {!lierda && (
@@ -1365,22 +1390,22 @@ export function App() {
                     onChange={(event) =>
                       changeSetting('autoLog', event.target.checked)
                     }
-                    help="重启后尝试用已授权的串口读取运行输出。"
+                    help={t('重启后尝试用已授权的串口读取运行输出。')}
                   >
-                    烧录完成后打开串口日志
+                    {t('烧录完成后打开串口日志')}
                   </Check>
                 </div>
               )}
               {progress && (
                 <div className="actions">
                   <div className="row spread">
-                    <strong role="status" data-outcome={progress.outcome}>{progress.message}</strong>
+                    <strong role="status" data-outcome={progress.outcome}>{t(progress.message)}</strong>
                     <span>{progress.percent}%</span>
                   </div>
                   <progress
                     max="100"
                     value={progress.percent}
-                    aria-label="烧录进度"
+                    aria-label={t('烧录进度')}
                   />
                 </div>
               )}
@@ -1395,7 +1420,7 @@ export function App() {
         aria-labelledby="confirm-title"
         onClose={beginWrite}
       >
-        <h2 id="confirm-title">确认烧录</h2>
+        <h2 id="confirm-title">{t('确认烧录')}</h2>
         {pending?.kind === 'lierda' ? (
           <LierdaFlashSummary firmware={pending} />
         ) : (
@@ -1403,29 +1428,29 @@ export function App() {
             {pending && <FlashSummary firmware={pending} chip={device?.chip} />}
             <p className="muted actions">
               {!bk && settings.eraseAll
-                ? '将擦除整片 Flash。请确认现有设备数据可以清除。'
+                ? t('将擦除整片 Flash。请确认现有设备数据可以清除。')
                 : pending?.kind === 'segments'
-                  ? '将擦除镜像覆盖的 Flash 扇区。'
-                  : '烧录后请重新配网和绑定设备。'}
+                  ? t('将擦除镜像覆盖的 Flash 扇区。')
+                  : t('烧录后请重新配网和绑定设备。')}
             </p>
           </>
         )}
         <form method="dialog" className="row dialog-actions actions">
           <button className="btn" value="cancel">
-            返回
+            {t('返回')}
           </button>
           <button
             className="btn primary"
             value="flash"
             disabled={!device || pendingLierdaMismatch}
           >
-            确认写入
+            {t('确认写入')}
           </button>
         </form>
       </dialog>
       {fullscreenError && (
         <div className="toast" role="status">
-          {fullscreenError}
+          {t(fullscreenError)}
         </div>
       )}
     </>

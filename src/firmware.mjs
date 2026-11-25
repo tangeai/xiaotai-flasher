@@ -1,3 +1,4 @@
+import { LocalizedError } from './i18n.mjs';
 import { parseAddress, validateLayout } from './flash-image.mjs';
 
 export function prepareFirmware(
@@ -8,7 +9,7 @@ export function prepareFirmware(
     const release = board?.versions.find(
       (candidate) => candidate.version === version,
     );
-    if (!release) throw new Error('请选择开发板和固件版本。');
+    if (!release) throw new LocalizedError('请选择开发板和固件版本。');
     return {
       kind: 'official',
       release,
@@ -28,12 +29,12 @@ export function prepareFirmware(
     !source.length ||
     source.some(({ file }) => !file?.size || !/\.bin$/i.test(file.name))
   ) {
-    throw new Error(
+    throw new LocalizedError(
       segmented ? '请为每一行选择 BIN 文件。' : '请选择完整 BIN 镜像。',
     );
   }
   if (source.some(({ address }) => !Number.isInteger(address)))
-    throw new Error('请填写有效的 Flash 起始地址。');
+    throw new LocalizedError('请填写有效的 Flash 起始地址。');
   const entries = source.map(({ file, address }) => ({
     file,
     address,

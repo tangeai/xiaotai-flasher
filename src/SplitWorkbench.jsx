@@ -1,3 +1,4 @@
+import { t } from './i18n.mjs';
 import { useLayoutEffect, useRef, useState } from 'react';
 
 const minimum = 320;
@@ -41,9 +42,9 @@ export function SplitWorkbench({ children: [firmware, consolePanel] }) {
     <div className="workbench" ref={container} style={{ '--firmware-width': current + 'px' }}>
       {firmware}
       <div className="panel-divider" role="separator" tabIndex={0}
-        aria-label="调整固件面板宽度" aria-orientation="vertical" aria-controls="firmware-panel"
+        aria-label={t('调整固件面板宽度')} aria-orientation="vertical" aria-controls="firmware-panel"
         aria-valuemin={minimum} aria-valuemax={maximum} aria-valuenow={current}
-        aria-valuetext={current + ' 像素'} title="拖动调整宽度，双击恢复默认"
+        aria-valuetext={current + t(' 像素')} title={t('拖动调整宽度，双击恢复默认')}
         onPointerDown={event => {
           if (!event.isPrimary || event.button !== 0) return;
           event.currentTarget.setPointerCapture(event.pointerId);

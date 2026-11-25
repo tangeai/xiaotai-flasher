@@ -1,3 +1,4 @@
+import { LocalizedError } from './i18n.mjs';
 // Keep each committed file small enough to reopen for the next checkpoint.
 const partBytes = 10 * 1024 * 1024;
 const checkpointCharacters = 256 * 1024;
@@ -39,7 +40,7 @@ export function startSerialRecording(directory, onError) {
     const stream = await file.createWritable({ keepExistingData: size > 0 });
     try {
       if ((await file.getFile()).size !== size)
-        throw new Error('日志文件大小已被更改，请重新开始记录。');
+        throw new LocalizedError('日志文件大小已被更改，请重新开始记录。');
       await stream.seek(size);
       await stream.write(blob);
       await stream.close();
@@ -81,7 +82,7 @@ export function startSerialRecording(directory, onError) {
         overflowed = true;
         clearInterval(timer);
         flush();
-        onError(new Error('写入速度跟不上串口输出，已停止接收新日志。'));
+        onError(new LocalizedError('写入速度跟不上串口输出，已停止接收新日志。'));
         return;
       }
       pending.push(text);

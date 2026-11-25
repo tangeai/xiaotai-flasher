@@ -1,3 +1,4 @@
+import { LocalizedError, t, localizedMessage } from './i18n.mjs';
 import { chips } from './chips.mjs';
 import { lierdaBoards } from './lierda-boards.mjs';
 
@@ -25,14 +26,14 @@ function linkedURL(raw, base) {
     (url.protocol !== 'https:' &&
       !(url.protocol === 'http:' && url.origin === new URL(base).origin))
   ) {
-    throw new Error('固件配置与 BIN 需使用同源链接或 HTTPS 直链。');
+    throw new LocalizedError('固件配置与 BIN 需使用同源链接或 HTTPS 直链。');
   }
   return url;
 }
 
 export function publishedBoards(data, catalogURL) {
   if (!Array.isArray(data?.boards))
-    throw new Error('固件配置必须包含 boards 数组。');
+    throw new LocalizedError('固件配置必须包含 boards 数组。');
   const slugs = new Set();
   return data.boards.flatMap((board) => {
     const hardware = lierdaBoards.find(({ slug }) => slug === board?.slug);
@@ -52,7 +53,7 @@ export function publishedBoards(data, catalogURL) {
       typeof board.chip !== 'string' ||
       !Array.isArray(board.releases)
     ) {
-      throw new Error('板卡标识、型号、芯片或版本列表有误。');
+      throw new LocalizedError('板卡标识、型号、芯片或版本列表有误。');
     }
     slugs.add(board.slug);
     const chip = board.chip.trim().toUpperCase();
@@ -62,7 +63,7 @@ export function publishedBoards(data, catalogURL) {
       flashBytes !== undefined &&
       (!Number.isSafeInteger(flashBytes) || flashBytes <= 0)
     ) {
-      throw new Error(`${board.model} 的 Flash 容量配置无效。`);
+      throw new LocalizedError(localizedMessage('@0 的 Flash 容量配置无效。', board.model));
     }
     const versionNames = new Set();
     const versions = board.releases.flatMap((release) => {
@@ -76,7 +77,7 @@ export function publishedBoards(data, catalogURL) {
         versionNames.has(version) ||
         !releaseStates.has(release.status)
       ) {
-        throw new Error(`${board.model} 的固件版本或发布状态有误。`);
+        throw new LocalizedError(localizedMessage('@0 的固件版本或发布状态有误。', board.model));
       }
       versionNames.add(version);
       if (release.status !== 'published') return [];
@@ -87,14 +88,14 @@ export function publishedBoards(data, catalogURL) {
         (release.recommended !== undefined &&
           typeof release.recommended !== 'boolean')
       ) {
-        throw new Error(
-          `${board.model} ${release.version} 的 BIN 链接或 SHA‑256 有误。`,
+        throw new LocalizedError(
+          localizedMessage('@0 @1 的 BIN 链接或 SHA‑256 有误。', board.model, release.version),
         );
       }
       return [{ ...release, version, bin_url: binURL.href }];
     });
     if (versions.filter((release) => release.recommended).length > 1) {
-      throw new Error(`${board.model} 只能有一个推荐版本。`);
+      throw new LocalizedError(localizedMessage('@0 只能有一个推荐版本。', board.model));
     }
     if (!versions.length) return [];
     return [
@@ -144,7 +145,7 @@ async function readJSON(url, signal) {
       ? AbortSignal.any([signal, AbortSignal.timeout(5000)])
       : AbortSignal.timeout(5000),
   });
-  if (!response.ok) throw new Error('无法读取固件配置。');
+  if (!response.ok) throw new LocalizedError('无法读取固件配置。');
   return { data: await response.json(), url: response.url || url.href };
 }
 
@@ -162,7 +163,7 @@ export async function downloadFirmware(release, capacity, signal) {
     credentials: 'omit',
     signal: downloadSignal,
   });
-  if (!response.ok || !response.body) throw new Error('固件下载失败。');
+  if (!response.ok || !response.body) throw new LocalizedError('固件下载失败。');
   const reader = response.body.getReader();
   const output = new Uint8Array(capacity);
   let written = 0;
@@ -172,7 +173,7 @@ export async function downloadFirmware(release, capacity, signal) {
       if (chunk.done) break;
       if (written + chunk.value.length > capacity) {
         await reader.cancel();
-        throw new Error('固件超过已连接设备的 Flash 容量。');
+        throw new LocalizedError('固件超过已连接设备的 Flash 容量。');
       }
       output.set(chunk.value, written);
       written += chunk.value.length;
@@ -187,11 +188,11 @@ export async function downloadFirmware(release, capacity, signal) {
     byte.toString(16).padStart(2, '0'),
   ).join('');
   if (actual !== release.sha256.toLowerCase())
-    throw new Error('下载固件的 SHA‑256 校验失败。');
+    throw new LocalizedError('下载固件的 SHA‑256 校验失败。');
   return {
     data,
     size: written,
-    name: release.version + ' 完整镜像',
+    name: release.version + t(' 完整镜像'),
     address: 0,
   };
 }

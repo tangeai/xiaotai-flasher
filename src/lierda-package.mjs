@@ -1,3 +1,4 @@
+import { LocalizedError, localizedMessage } from './i18n.mjs';
 const flashBase = 0x00800000;
 const flashSize = 0x00400000;
 const packageHeaderLength = 52;
@@ -82,7 +83,7 @@ const hardwareProfiles = [ec718pm, ec718hm];
 
 export function getLierdaHardwareProfile(model) {
   const hardware = hardwareProfiles.find((candidate) => candidate.model === model);
-  if (!hardware) throw new Error('请选择受支持的利尔达板型。');
+  if (!hardware) throw new LocalizedError('请选择受支持的利尔达板型。');
   return hardware;
 }
 
@@ -113,13 +114,13 @@ function productName(data, view, headerEnd) {
     const field = readString(data, offset + 4, offset + 68);
     if (field === 'productname') {
       if (product || view.getUint32(offset, true) !== 2) {
-        throw new Error('固件产品标识重复或格式无效。');
+        throw new LocalizedError('固件产品标识重复或格式无效。');
       }
       product = readString(data, offset + 68, offset + 132);
     }
     if (field === 'pkgmode') {
       if (mode !== undefined || view.getUint32(offset, true) !== 1) {
-        throw new Error('固件打包模式重复或格式无效。');
+        throw new LocalizedError('固件打包模式重复或格式无效。');
       }
       mode = view.getUint32(offset + 68, true);
     }
@@ -137,19 +138,19 @@ function checkApplication(data, profile, name) {
   const matchesName = name === profile.name
     || (name.startsWith(`${profile.name}_`) && /^[\w.-]+$/u.test(name));
   if (!matchesName) {
-    throw new Error('应用镜像类型与所选利尔达板型不匹配。');
+    throw new LocalizedError('应用镜像类型与所选利尔达板型不匹配。');
   }
   if (!matchesLierdaApplicationLayout(data, profile)) {
-    throw new Error('应用镜像标识或文件系统布局与所选型号分区不匹配。');
+    throw new LocalizedError('应用镜像标识或文件系统布局与所选型号分区不匹配。');
   }
 }
 
 export async function parseLierdaPackage(input, { model, stage, filename, sha256: expectedSha } = {}) {
-  if (stage !== 'app') throw new Error('所选利尔达板型需要应用固件包。');
+  if (stage !== 'app') throw new LocalizedError('所选利尔达板型需要应用固件包。');
   const hardware = getLierdaHardwareProfile(model);
   if (!(input instanceof ArrayBuffer || input instanceof Uint8Array)
       || input.byteLength < packageHeaderLength || input.byteLength > hardware.size + 0x10000) {
-    throw new Error('请提供匹配的利尔达内部 Flash binpkg。');
+    throw new LocalizedError('请提供匹配的利尔达内部 Flash binpkg。');
   }
 
   // Use the same snapshot for the container hash, image checks, and transfer.
@@ -159,25 +160,25 @@ export async function parseLierdaPackage(input, { model, stage, filename, sha256
   if (!packageMagic.every((byte, index) => bytes[index] === byte)
       || readString(bytes, 20, 26) !== 'SHA256'
       || view.getUint32(16, true) !== specs.length) {
-    throw new Error('固件须包含 BL、AP、CP 和 APP 四个内部 Flash 镜像。');
+    throw new LocalizedError('固件须包含 BL、AP、CP 和 APP 四个内部 Flash 镜像。');
   }
   const count = view.getUint16(28, true);
   const headerLength = view.getUint16(30, true);
   let offset = packageHeaderLength + headerLength;
   if (count * metadataRecordLength !== headerLength || offset + imageHeaderLength > bytes.length
       || productName(bytes, view, offset) !== hardware.product) {
-    throw new Error(`固件产品或扩展头与 ${hardware.product} 不匹配。`);
+    throw new LocalizedError(localizedMessage('固件产品或扩展头与 @0 不匹配。', hardware.product));
   }
 
   const sha256 = await lierdaSha256(bytes);
   if (expectedSha !== undefined
       && (typeof expectedSha !== 'string' || sha256 !== expectedSha.toLowerCase())) {
-    throw new Error('固件包 SHA-256 与公布的摘要不一致。');
+    throw new LocalizedError('固件包 SHA-256 与公布的摘要不一致。');
   }
   const images = [];
   for (const spec of specs) {
     const start = offset + imageHeaderLength;
-    if (start > bytes.length) throw new Error(`${spec.role} 镜像头越界。`);
+    if (start > bytes.length) throw new LocalizedError(localizedMessage('@0 镜像头越界。', spec.role));
     const name = readString(bytes, offset, offset + 64);
     const address = view.getUint32(offset + 64, true) - flashBase;
     const capacity = view.getUint32(offset + 68, true);
@@ -191,7 +192,7 @@ export async function parseLierdaPackage(input, { model, stage, filename, sha256
     if (address !== spec.address || capacity !== spec.capacity || recordedOffset !== offset
         || !length || length > capacity || end > bytes.length || !insideRange
         || (spec.digest && (name !== spec.name || length !== capacity))) {
-      throw new Error(`${spec.role} 镜像地址、容量或位置与利尔达分区不匹配。`);
+      throw new LocalizedError(localizedMessage('@0 镜像地址、容量或位置与利尔达分区不匹配。', spec.role));
     }
     const data = bytes.subarray(start, end);
     if (!spec.digest) checkApplication(data, hardware.app, name);
@@ -199,12 +200,12 @@ export async function parseLierdaPackage(input, { model, stage, filename, sha256
     const hash = hexBytes(digest);
     if (readString(bytes, offset + 80, offset + 144).toLowerCase() !== hash
         || (spec.digest && hash !== spec.digest)) {
-      throw new Error(`${spec.role} 镜像 SHA-256 与固件包或已验证底包不一致。`);
+      throw new LocalizedError(localizedMessage('@0 镜像 SHA-256 与固件包或已验证底包不一致。', spec.role));
     }
     images.push({ role: spec.role, imageId: spec.id, address, capacity, data, digest, sha: hash });
     offset = end;
   }
-  if (offset !== bytes.length) throw new Error('固件有额外镜像或未识别数据。');
+  if (offset !== bytes.length) throw new LocalizedError('固件有额外镜像或未识别数据。');
 
   return { bytes, filename, model, stage, sha256, byteLength: bytes.length, images };
 }

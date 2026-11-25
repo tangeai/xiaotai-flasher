@@ -1,3 +1,4 @@
+import { LocalizedError, t, localizedMessage } from './i18n.mjs';
 // Host-side protocol adapted from yuzhan-tech/ectool v0.1.0 (MIT).
 // d8b472126a9a070439df6b3c5677071a01b0c026
 // https://github.com/yuzhan-tech/ectool/tree/d8b472126a9a070439df6b3c5677071a01b0c026
@@ -32,8 +33,8 @@ const MAX_ROM_RESPONSE = 12;
 const RESPONSE_HEADER_LENGTH = 6;
 const EMPTY = new Uint8Array(0);
 
-class SerialTimeout extends Error {}
-class AtPortClosed extends Error {}
+class SerialTimeout extends LocalizedError {}
+class AtPortClosed extends LocalizedError {}
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -105,7 +106,7 @@ export async function selectLierdaPort(serial, { downloadOnly = false, chooseOth
     }
   }
   if (globalThis.navigator?.userActivation?.isActive === false) {
-    throw new Error('无法自动确认串口，请点击「选择其他串口」。');
+    throw new LocalizedError('无法自动确认串口，请点击「选择其他串口」。');
   }
   if (downloadOnly) return serial.requestPort({ filters: [lierdaDownloadFilter] });
   return serial.requestPort();
@@ -135,11 +136,11 @@ export async function selectLierdaDownloadPort(serial, { atPort, previousPorts }
 
   const selected = await serial.requestPort({ filters: [lierdaDownloadFilter] });
   if (!isDownloadPort(selected) || selected.connected === false) {
-    throw new Error('请选择已连接的 Lierda QDLoader 下载口。');
+    throw new LocalizedError('请选择已连接的 Lierda QDLoader 下载口。');
   }
-  if (previous.has(selected)) throw new Error('该下载口在切换前已连接。请选择刚进入下载模式的设备。');
+  if (previous.has(selected)) throw new LocalizedError('该下载口在切换前已连接。请选择刚进入下载模式的设备。');
   if (!atPortDisconnected(atPort, await serial.getPorts())) {
-    throw new Error('原 AT 串口尚未断开，请等待设备进入下载模式。');
+    throw new LocalizedError('原 AT 串口尚未断开，请等待设备进入下载模式。');
   }
   return selected;
 }
@@ -182,7 +183,7 @@ function atReplies(reader, signal) {
           if (line === 'ERROR' || /^\+(?:CME|CMS) ERROR:/u.test(line)) return false;
           onLine?.(line.trim());
         }
-        if (text.length > AT_REPLY_LIMIT) throw new Error('当前串口未返回有效的 AT 应答。');
+        if (text.length > AT_REPLY_LIMIT) throw new LocalizedError('当前串口未返回有效的 AT 应答。');
       }
       throw new SerialTimeout('等待 AT 应答超时。');
     },
@@ -191,8 +192,8 @@ function atReplies(reader, signal) {
 }
 
 async function withLierdaAtPort(port, signal, usePort) {
-  if (!isLierdaAtPort(port)) throw new Error('请选择设备的 Lierda At Port。');
-  if (port.readable || port.writable) throw new Error('请先关闭占用 AT 串口的日志或串口工具。');
+  if (!isLierdaAtPort(port)) throw new LocalizedError('请选择设备的 Lierda At Port。');
+  if (port.readable || port.writable) throw new LocalizedError('请先关闭占用 AT 串口的日志或串口工具。');
   signal?.throwIfAborted();
   let reader;
   let writer;
@@ -260,17 +261,17 @@ function identifyLierdaAtPort(port) {
 export async function requestLierdaDownloadMode(port, { signal, log = () => {}, timeoutMs = AT_REPLY_MS } = {}) {
   return withLierdaAtPort(port, signal, async (writer, replies) => {
     await withTimeout(writer.write(atProbe), WRITE_TIMEOUT_MS, '发送 AT 校验命令超时。');
-    if (!await replies.readResult(timeoutMs)) throw new Error('AT 校验失败，请选择 Lierda At Port。');
-    log('AT 串口校验通过。');
+    if (!await replies.readResult(timeoutMs)) throw new LocalizedError('AT 校验失败，请选择 Lierda At Port。');
+    log(t('AT 串口校验通过。'));
     replies.clear();
     signal?.throwIfAborted();
     if (!await probeLierdaIdentity(writer, replies, timeoutMs)) {
-      throw new Error('无法确认利尔达 NT26F6D0 或 NT26F9D0 型号。可手动进入下载模式并选择 QDLoader。');
+      throw new LocalizedError('无法确认利尔达 NT26F6D0 或 NT26F9D0 型号。可手动进入下载模式并选择 QDLoader。');
     }
     replies.clear();
     signal?.throwIfAborted();
     await withTimeout(writer.write(atDownload), WRITE_TIMEOUT_MS, '发出下载复位命令未得到确认。');
-    log('已发送一次下载复位命令，等待 QDLoader。');
+    log(t('已发送一次下载复位命令，等待 QDLoader。'));
 
     let acknowledged;
     try {
@@ -282,7 +283,7 @@ export async function requestLierdaDownloadMode(port, { signal, log = () => {}, 
           && port.connected !== false && port.readable && error.name !== 'NetworkError') throw error;
       return { acknowledged: false };
     }
-    if (!acknowledged) throw new Error('设备拒绝进入下载模式。');
+    if (!acknowledged) throw new LocalizedError('设备拒绝进入下载模式。');
     return { acknowledged: true };
   });
 }
@@ -305,7 +306,7 @@ export async function waitForLierdaDownloadPort(serial, {
     signal?.throwIfAborted();
     if (!previousDownloadPortsStillConnected(previous, ports)) return null;
     const candidates = newDownloadPorts(ports, previous);
-    if (candidates.length > 1) throw new Error('检测到多个 QDLoader，请只连接要烧录的设备。');
+    if (candidates.length > 1) throw new LocalizedError('检测到多个 QDLoader，请只连接要烧录的设备。');
     if (atPortDisconnected(atPort, ports) && candidates.length === 1) return candidates[0];
     await wait(Math.min(QDLOADER_POLL_MS, Math.max(0, deadline - performance.now())));
   }
@@ -365,7 +366,7 @@ function serialIO(reader, writer) {
     },
 
     async write(bytes) {
-      await withTimeout(writer.write(bytes), WRITE_TIMEOUT_MS, "Web Serial 发送超时");
+      await withTimeout(writer.write(bytes), WRITE_TIMEOUT_MS, 'Web Serial 发送超时');
     },
 
     async readExactly(length) {
@@ -377,11 +378,11 @@ function serialIO(reader, writer) {
         const { value, done } = await withTimeout(
           pendingRead,
           deadline - performance.now(),
-          "Web Serial 接收超时"
+          'Web Serial 接收超时'
         );
         pendingRead = undefined;
         if (done) {
-          throw new Error("Web Serial 下载口已断开");
+          throw new LocalizedError('Web Serial 下载口已断开');
         }
         const combined = new Uint8Array(buffered.length + value.length);
         combined.set(buffered);
@@ -397,7 +398,7 @@ function serialIO(reader, writer) {
 
 async function synchronize(io, word, label) {
   const token = words(word);
-  let lastReply = "未收到完整回包";
+  let lastReply = localizedMessage('未收到完整回包');
   for (let attempt = 0; attempt < SYNC_ATTEMPTS; attempt += 1) {
     io.discardBufferedInput();
     await io.write(token);
@@ -409,7 +410,7 @@ async function synchronize(io, word, label) {
       reply = await io.readExactly(token.length);
     } catch (error) {
       if (error instanceof SerialTimeout) {
-        lastReply = error.message;
+        lastReply = error;
         continue;
       }
       throw error;
@@ -437,7 +438,7 @@ async function synchronize(io, word, label) {
     io.discardBufferedInput();
     return lastReply;
   }
-  throw new Error(label + " 同步失败，最后一次接收 " + lastReply);
+  throw new LocalizedError(localizedMessage('@0 同步失败，最后一次接收 @1', label, lastReply));
 }
 
 async function sendCommand(io, command, payload, { index = 0, lpc = false, agent = false } = {}) {
@@ -466,7 +467,7 @@ async function sendCommand(io, command, payload, { index = 0, lpc = false, agent
   // Browser Web Serial does not expose a native per-transaction purge.
   // Discard already buffered input, and fail on an ambiguous command reply.
   io.discardBufferedInput();
-  const label = (lpc ? "LPC" : agent ? "AGBOOT" : "DLBOOT") + " 命令 0x" + command.toString(16).padStart(2, "0");
+  const label = localizedMessage('@0 命令 0x@1', lpc ? "LPC" : agent ? "AGBOOT" : "DLBOOT", command.toString(16).padStart(2, "0"));
   try {
     await io.write(frame);
     if (!lpc) {
@@ -475,27 +476,26 @@ async function sendCommand(io, command, payload, { index = 0, lpc = false, agent
     const response = await io.readExactly(RESPONSE_HEADER_LENGTH);
     const responseLength = response[5];
     if (!lpc && responseLength > MAX_ROM_RESPONSE) {
-      throw new Error("回包过长，收到 " + responseLength + " 字节");
+      throw new LocalizedError(localizedMessage('回包过长，收到 @0 字节', responseLength));
     }
     const data = responseLength > 0 ? await io.readExactly(responseLength) : EMPTY;
     if (usesCrc) {
       const checksum = await io.readExactly(4);
       if (wordAt(checksum) !== crc32(response, data)) {
-        throw new Error("回包 CRC32 校验失败");
+        throw new LocalizedError('回包 CRC32 校验失败');
       }
     }
     const responseIndex = downloadData ? (index + 1) & 0xff : index;
     if (response[0] !== command || response[1] !== responseIndex
         || response[2] !== order || response[3] !== inverse) {
-      throw new Error("回包头与请求不匹配，收到 " + bytesHex(response, " "));
+      throw new LocalizedError(localizedMessage('回包头与请求不匹配，收到 @0', bytesHex(response, " ")));
     }
     if (response[4] !== 0) {
-      throw new Error("设备返回错误状态 0x" + response[4].toString(16).padStart(2, "0")
-        + (data.length ? " · " + bytesHex(data, " ") : ""));
+      throw new LocalizedError(localizedMessage('设备返回错误状态 0x@0@1', response[4].toString(16).padStart(2, "0"), data.length ? " · " + bytesHex(data, " ") : ""));
     }
     return data;
   } catch (error) {
-    throw new Error(label + " · " + error.message, { cause: error });
+    throw new LocalizedError(localizedMessage('@0 · @1', label, error), { cause: error });
   }
 }
 
@@ -504,13 +504,13 @@ async function imageInfo(io, imageId, label, log, agent = false) {
   const version = await sendCommand(io, ROM_COMMANDS.version, EMPTY, options);
   if (!agent) {
     if (!bytesHex(version).startsWith(EC718PM_ROM_PREFIX)) {
-      throw new Error("下载口 ROM 与已验证的利尔达移芯版本不匹配 · " + bytesHex(version, " "));
+      throw new LocalizedError(localizedMessage('下载口 ROM 与已验证的利尔达移芯版本不匹配 · @0', bytesHex(version, " ")));
     }
-    log("DLBOOT " + label + " · ROM 版本 " + bytesHex(version, " "));
+    log(t('DLBOOT @0 · ROM 版本 @1', label, bytesHex(version, " ")));
   }
   const selected = await sendCommand(io, ROM_COMMANDS.selectImage, EMPTY, options);
   if (selected.length !== 4 || wordAt(selected) !== imageId) {
-    throw new Error(label + " 镜像标识不匹配，收到 " + bytesHex(selected, " "));
+    throw new LocalizedError(localizedMessage('@0 镜像标识不匹配，收到 @1', label, bytesHex(selected, " ")));
   }
   await sendCommand(io, ROM_COMMANDS.verifyImage, EMPTY, options);
 }
@@ -522,11 +522,11 @@ async function sendImageData(io, data, agent = false) {
     const remaining = data.length - offset;
     const sizeResponse = await sendCommand(io, ROM_COMMANDS.dataHead, words(remaining), { agent });
     if (sizeResponse.length !== 4) {
-      throw new Error("DATA_HEAD 没有返回 4 字节的传输大小");
+      throw new LocalizedError('DATA_HEAD 没有返回 4 字节的传输大小');
     }
     const size = wordAt(sizeResponse);
     if (size === 0 || size > remaining || size > MAX_ROM_DATA_CHUNK) {
-      throw new Error("DATA_HEAD 返回无效传输大小 " + size);
+      throw new LocalizedError(localizedMessage('DATA_HEAD 返回无效传输大小 @0', size));
     }
     await sendCommand(io, ROM_COMMANDS.downloadData, data.subarray(offset, offset + size), { index, agent });
     offset += size;
@@ -549,7 +549,7 @@ async function imageHeader(length, digest, { id, address, baud, controls }) {
   putWord(header, 72, 0x04010000);      // Default image header load address.
   putWord(header, 76, length);
   header.set(digest, 96);
-  const headerDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", header));
+  const headerDigest = new Uint8Array(await crypto.subtle.digest('SHA-256', header));
   header.set(headerDigest, 32);
   return header;
 }
@@ -558,21 +558,21 @@ async function imageHeader(length, digest, { id, address, baud, controls }) {
 async function connectAgent(port, agentBytes, log) {
   const info = port.getInfo();
   if (info.usbVendorId !== DOWNLOAD_VENDOR || info.usbProductId !== DOWNLOAD_PRODUCT) {
-    throw new Error("请选择 USB 下载口 17D1:0001");
+    throw new LocalizedError('请选择 USB 下载口 17D1:0001');
   }
   if (!(agentBytes instanceof Uint8Array) || agentBytes.length !== AGENT_BYTE_LENGTH) {
-    throw new Error("AgentBoot 文件长度不匹配，应为 " + AGENT_BYTE_LENGTH + " 字节");
+    throw new LocalizedError(localizedMessage('AgentBoot 文件长度不匹配，应为 @0 字节', AGENT_BYTE_LENGTH));
   }
   // The hash applies to the same snapshot sent to the chip.
   const agent = new Uint8Array(agentBytes);
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", agent));
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', agent));
   if (bytesHex(digest) !== AGENT_DIGEST) {
-    throw new Error("AgentBoot SHA-256 与已验证的 USB 镜像不一致");
+    throw new LocalizedError('AgentBoot SHA-256 与已验证的 USB 镜像不一致');
   }
   const header = await imageHeader(agent.length, digest, {
     id: AGENT_IMAGE, address: 0, baud: USB_BAUD, controls: 1,
   });
-  if (!port.readable || !port.writable) throw new Error("未打开 QDLoader 串口");
+  if (!port.readable || !port.writable) throw new LocalizedError('未打开 QDLoader 串口');
   const reader = port.readable.getReader();
   let writer;
   let closed = false;
@@ -581,7 +581,7 @@ async function connectAgent(port, agentBytes, log) {
     closed = true;
     if (writer) writer.releaseLock();
     try {
-      await withTimeout(reader.cancel(), SERIAL_TIMEOUT_MS, "关闭 Web Serial 读取流超时");
+      await withTimeout(reader.cancel(), SERIAL_TIMEOUT_MS, '关闭 Web Serial 读取流超时');
     } catch {
       // A physical disconnect can already have errored the read stream.
     } finally {
@@ -592,14 +592,14 @@ async function connectAgent(port, agentBytes, log) {
     writer = port.writable.getWriter();
     const io = serialIO(reader, writer);
     const reply = await synchronize(io, ROM_SYNC, "DLBOOT");
-    log("DLBOOT 同步通过 · RX " + reply.toUpperCase());
+    log(t('DLBOOT 同步通过 · RX @0', reply.toUpperCase()));
     await imageInfo(io, HEAD_IMAGE, "HEAD", log);
     await sendImageData(io, header);
-    await synchronize(io, ROM_SYNC, "DLBOOT 镜像头后");
+    await synchronize(io, ROM_SYNC, localizedMessage('DLBOOT 镜像头后'));
     await imageInfo(io, AGENT_IMAGE, "AgentBoot", log);
     await sendImageData(io, agent);
     await synchronize(io, LPC_SYNC, "LPC");
-    log("USB AgentBoot 已载入 RAM，LPC 就绪。");
+    log(t('USB AgentBoot 已载入 RAM，LPC 就绪。'));
     return { io, close };
   } catch (error) {
     await close();
@@ -610,7 +610,7 @@ async function connectAgent(port, agentBytes, log) {
 async function readMemory(io, address, length) {
   const data = await sendCommand(io, LPC_READ_MEM, words(length, address), { lpc: true });
   if (data.length !== length) {
-    throw new Error("LPC 回读长度不符，应为 " + length + "，收到 " + data.length);
+    throw new LocalizedError(localizedMessage('LPC 回读长度不符，应为 @0，收到 @1', length, data.length));
   }
   return data;
 }

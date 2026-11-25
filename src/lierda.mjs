@@ -1,3 +1,4 @@
+import { LocalizedError, t, localizedMessage } from './i18n.mjs';
 import {
   isDownloadPort, USB_BAUD, AGENT_SYNC, LPC_SYNC, HEAD_IMAGE,
   EMPTY, words, sendCommand, synchronize, imageInfo, sendImageData, imageHeader,
@@ -31,7 +32,7 @@ async function readRange(io, start, length, onProgress = () => {}) {
     try {
       block = await readMemory(io, AP_XIP_BASE + start + offset, size);
     } catch (error) {
-      throw new Error("回读 " + hexAddress(AP_XIP_BASE + start + offset) + " · " + error.message,
+      throw new LocalizedError(localizedMessage('回读 @0 · @1', hexAddress(AP_XIP_BASE + start + offset), error),
         { cause: error });
     }
     data.set(block, offset);
@@ -48,13 +49,13 @@ async function verifyCurrentBase(backup, images, hardware) {
   for (const image of images.slice(0, 3)) {
     const current = backup.subarray(image.address, image.address + image.data.length);
     if (await sha256(current) !== image.sha) {
-      throw new Error("当前 " + image.role + " 与所选固件的底包不一致，请先核对板卡布局");
+      throw new LocalizedError(localizedMessage('当前 @0 与所选固件的底包不一致，请先核对板卡布局', image.role));
     }
   }
   const app = images.find(({ role }) => role === "APP");
   const appHeader = backup.subarray(app.address, app.address + 24);
   if (!matchesLierdaApplicationLayout(appHeader, hardware.app)) {
-    throw new Error('当前设备的应用和文件系统布局与 ' + hardware.boardLabel + ' 不匹配。');
+    throw new LocalizedError(localizedMessage('当前设备的应用和文件系统布局与 @0 不匹配。', localizedMessage(hardware.boardLabel)));
   }
 }
 
@@ -63,26 +64,26 @@ async function erase(io, eraseRanges, log, onProgress) {
   const total = eraseRanges.reduce((sum, { start, end }) => sum + end - start, 0);
   for (const { start, end } of eraseRanges) {
     await synchronize(io, LPC_SYNC, "LPC");
-    log("擦除物理区段 " + hexAddress(start) + " 至 " + hexAddress(end));
+    log(t('擦除物理区段 @0 至 @1', hexAddress(start), hexAddress(end)));
     let nextReport = start + REPORT_INTERVAL;
     for (let offset = start; offset < end; offset += ERASE_REQUEST_SIZE) {
       const length = Math.min(ERASE_REQUEST_SIZE, end - offset);
       try {
         await sendCommand(io, FLASH_ERASE, words(length, AP_XIP_BASE + offset), { lpc: true });
       } catch (error) {
-        throw new Error("擦除 " + hexAddress(offset) + " · " + error.message, { cause: error });
+        throw new LocalizedError(localizedMessage('擦除 @0 · @1', hexAddress(offset), error), { cause: error });
       }
       erased += length;
       if (offset + length >= nextReport || offset + length === end) {
         onProgress(erased, total);
-        log("已擦除至 " + hexAddress(offset + length));
+        log(t('已擦除至 @0', hexAddress(offset + length)));
         nextReport += REPORT_INTERVAL;
       }
     }
     for (const address of [start, end - 16]) {
       const sample = await readMemory(io, AP_XIP_BASE + address, 16);
       if (!sample.every((byte) => byte === 0xff)) {
-        throw new Error("擦除抽检未通过 · " + hexAddress(address));
+        throw new LocalizedError(localizedMessage('擦除抽检未通过 · @0', hexAddress(address)));
       }
     }
   }
@@ -101,8 +102,7 @@ async function writeImage(io, image, log, onProgress) {
     // This reproduces the factory USB header for EC718PM images and EC718HM APP.
     controls: 4,
   });
-  log(image.role + " 写入 " + hexAddress(image.address) + " · " + image.data.length
-    + " 字节 · 镜像头 SHA-256 " + bytesHex(header.subarray(32, 64)));
+  log(t('@0 写入 @1 · @2 字节 · 镜像头 SHA-256 @3', image.role, hexAddress(image.address), image.data.length, bytesHex(header.subarray(32, 64))));
   await sendImageData(io, header, true);
   for (let offset = 0; offset < image.data.length; offset += WRITE_BLOCK_SIZE) {
     await synchronize(io, AGENT_SYNC, "AGBOOT");
@@ -111,19 +111,19 @@ async function writeImage(io, image, log, onProgress) {
     try {
       await sendImageData(io, image.data.subarray(offset, end), true);
     } catch (error) {
-      throw new Error(image.role + " 写入偏移 " + hexAddress(offset) + " · " + error.message,
+      throw new LocalizedError(localizedMessage('@0 写入偏移 @1 · @2', image.role, hexAddress(offset), error),
         { cause: error });
     }
     if (end === image.data.length || end % REPORT_INTERVAL === 0) {
       onProgress(end);
-      log(image.role + " 已发送 " + end + "/" + image.data.length + " 字节");
+      log(t('@0 已发送 @1/@2 字节', image.role, end, image.data.length));
     }
   }
   const result = await sendCommand(io, BURN_STATUS, EMPTY, { lpc: true });
   if (result.length !== 4 || result.some((byte) => byte !== 0)) {
-    throw new Error(image.role + " 写入状态异常 · " + bytesHex(result, " "));
+    throw new LocalizedError(localizedMessage('@0 写入状态异常 · @1', image.role, bytesHex(result, " ")));
   }
-  log(image.role + " 设备写入状态通过");
+  log(t('@0 设备写入状态通过', image.role));
 }
 
 async function verifyPreserved(io, backup, preservedRanges, onProgress = () => {}) {
@@ -132,21 +132,21 @@ async function verifyPreserved(io, backup, preservedRanges, onProgress = () => {
   for (const { start, end } of preservedRanges) {
     const actual = await readRange(io, start, end - start, (done) => onProgress(checked + done));
     if (await sha256(actual) !== await sha256(backup.subarray(start, end))) {
-      throw new Error('保留区与擦除前备份不一致 · ' + hexAddress(start));
+      throw new LocalizedError(localizedMessage('保留区与擦除前备份不一致 · @0', hexAddress(start)));
     }
     checked += end - start;
   }
 }
 
 async function readBackup(io, hardware, plan, saveBackup, log, onProgress) {
-  if (typeof saveBackup !== 'function') throw new Error('需要配置 Flash 备份保存位置。');
+  if (typeof saveBackup !== 'function') throw new LocalizedError('需要配置 Flash 备份保存位置。');
   await synchronize(io, LPC_SYNC, 'LPC');
-  log('回读烧录前的内部 Flash · ' + hardware.size / 0x100000 + ' MiB。');
+  log(t('回读烧录前的内部 Flash · @0 MiB。', hardware.size / 0x100000));
   const bytes = await readRange(io, 0, hardware.size, onProgress);
   await verifyCurrentBase(bytes, plan.images, hardware);
   const digest = await sha256(bytes);
   const location = await saveBackup(bytes.slice(), digest);
-  if (typeof location !== 'string' || !location) throw new Error('Flash 备份未确认保存。');
+  if (typeof location !== 'string' || !location) throw new LocalizedError('Flash 备份未确认保存。');
   return { bytes, digest, location, packageSha: plan.sha256 };
 }
 
@@ -156,42 +156,42 @@ async function verifyImages(io, images, log, progress) {
     await synchronize(io, LPC_SYNC, 'LPC');
     const actual = await readRange(io, image.address, image.data.length,
       (end) => progress(verified + end));
-    if (await sha256(actual) !== image.sha) throw new Error(image.role + ' 回读 SHA-256 不一致');
+    if (await sha256(actual) !== image.sha) throw new LocalizedError(localizedMessage('@0 回读 SHA-256 不一致', image.role));
     verified += image.data.length;
-    log(image.role + ' 全镜像回读 SHA-256 一致 · ' + image.sha);
+    log(t('@0 全镜像回读 SHA-256 一致 · @1', image.role, image.sha));
   }
 }
 
 async function detectLierdaHardware(io) {
   const bootloader = await readMemory(io, AP_XIP_BASE + lierdaBootFingerprintAddress, lierdaFingerprintLength);
   const hardware = matchLierdaBootFingerprint(await sha256(bootloader));
-  if (!hardware) throw new Error('无法识别设备的 BL 指纹。支持 NT26F6D0 Lite (F6D_D) 和 NT26F9D0 Pro (F9D_D)。');
+  if (!hardware) throw new LocalizedError('无法识别设备的 BL 指纹。支持 NT26F6D0 Lite (F6D_D) 和 NT26F9D0 Pro (F9D_D)。');
 
   for (const { role, address, sampleSha } of hardware.baseImages.slice(1)) {
     const sample = await readMemory(io, AP_XIP_BASE + address, lierdaFingerprintLength);
     if (await sha256(sample) !== sampleSha) {
-      throw new Error('当前设备的 ' + role + ' 指纹与 ' + hardware.boardLabel + ' 不匹配。');
+      throw new LocalizedError(localizedMessage('当前设备的 @0 指纹与 @1 不匹配。', role, localizedMessage(hardware.boardLabel)));
     }
   }
   const appHeader = await readMemory(io, AP_XIP_BASE + hardware.app.address, 24);
   if (!matchesLierdaApplicationLayout(appHeader, hardware.app)) {
-    throw new Error('当前设备的应用和文件系统布局与 ' + hardware.boardLabel + ' 不匹配。');
+    throw new LocalizedError(localizedMessage('当前设备的应用和文件系统布局与 @0 不匹配。', localizedMessage(hardware.boardLabel)));
   }
   if (hardware.applicationOnly) {
     const low = await readMemory(io, AP_XIP_BASE, 32);
     const high = await readMemory(io, AP_XIP_BASE + 0x400000, 32);
     if (high.every((byte, index) => byte === low[index])) {
-      throw new Error('内部 Flash 上半区与起始地址回读相同，无法确认 8 MiB 布局。');
+      throw new LocalizedError('内部 Flash 上半区与起始地址回读相同，无法确认 8 MiB 布局。');
     }
   }
   return hardware;
 }
 
 export async function connectLierda(port, _settings, log = () => {}) {
-  if (!isDownloadPort(port)) throw new Error('请选择利尔达 QDLoader 下载口（17D1:0001）。');
+  if (!isDownloadPort(port)) throw new LocalizedError('请选择利尔达 QDLoader 下载口（17D1:0001）。');
   const url = new URL('./lierda/agentboot-ec718pm-usb.bin', globalThis.document?.baseURI ?? import.meta.url);
   const response = await fetch(url);
-  if (!response.ok) throw new Error('无法加载 USB AgentBoot · HTTP ' + response.status);
+  if (!response.ok) throw new LocalizedError(localizedMessage('无法加载 USB AgentBoot · HTTP @0', response.status));
   const agent = new Uint8Array(await response.arrayBuffer());
   let connection;
   let hardware;
@@ -215,7 +215,7 @@ export async function connectLierda(port, _settings, log = () => {}) {
     await port.setSignals({ dataTerminalReady: true });
     connection = await connectAgent(port, agent, (line) => log(line + '\n'));
     hardware = await detectLierdaHardware(connection.io);
-    log(hardware.boardLabel + ' 底包和 ' + hardware.size / 0x100000 + ' MiB Flash 布局核对通过。\n');
+    log(t('@0 底包和 @1 MiB Flash 布局核对通过。\n', t(hardware.boardLabel), hardware.size / 0x100000));
   } catch (error) {
     await close().catch(() => {});
     throw error;
@@ -228,30 +228,30 @@ export async function connectLierda(port, _settings, log = () => {}) {
     lierdaModel: hardware.model, close,
     get canRetry() { return Boolean(isActive() && !resetAllowed); },
     async writeLierda(input, { onProgress = () => {}, log: writeLog = log, saveBackup } = {}) {
-      if (!isActive() || busy || resetAllowed) throw new Error('设备当前无法开始写入。');
+      if (!isActive() || busy || resetAllowed) throw new LocalizedError('设备当前无法开始写入。');
       busy = true;
       try {
         onProgress(0.02, '校验固件');
         const { bytes, board, model, stage, filename, sha256: expectedSha } = input;
         const target = model ?? board;
         if (target !== hardware.model) {
-          throw new Error('所选固件与当前连接的利尔达板型不匹配。');
+          throw new LocalizedError('所选固件与当前连接的利尔达板型不匹配。');
         }
         const plan = await parseLierdaPackage(bytes, { model: target, stage, filename, sha256: expectedSha });
         const writeImages = hardware.applicationOnly ? plan.images.filter(({ role }) => role === 'APP') : plan.images;
         let backup = interruptedBackup;
         if (backup) {
           if (plan.sha256 !== backup.packageSha || await sha256(backup.bytes) !== backup.digest) {
-            throw new Error('请用上次中断的固件继续烧录。');
+            throw new LocalizedError('请用上次中断的固件继续烧录。');
           }
           await verifyPreserved(io, backup.bytes, hardware.preservedRanges);
-          writeLog('使用本次连接上次写入前的完整备份。');
+          writeLog(t('使用本次连接上次写入前的完整备份。'));
         } else {
           backup = await readBackup(io, hardware, plan, saveBackup, writeLog, (end, total) =>
             onProgress(0.05 + 0.30 * end / total, '备份原始 Flash'));
         }
         interruptedBackup = backup;
-        writeLog('备份已保存 · ' + backup.location + ' · SHA-256 ' + backup.digest);
+        writeLog(t('备份已保存 · @0 · SHA-256 @1', backup.location, backup.digest));
         onProgress(0.35, '擦除固件区域');
         await erase(io, hardware.eraseRanges, writeLog,
           (end, total) => onProgress(0.35 + 0.10 * end / total, '擦除固件区域'));
@@ -260,7 +260,7 @@ export async function connectLierda(port, _settings, log = () => {}) {
         let written = 0;
         for (const image of writeImages) {
           await writeImage(io, image, writeLog, (end) =>
-            onProgress(0.45 + 0.30 * (written + end) / writeSize, '写入 ' + image.role));
+            onProgress(0.45 + 0.30 * (written + end) / writeSize, localizedMessage('写入 @0', image.role)));
           written += image.data.length;
         }
         onProgress(0.75, '回读校验');
@@ -271,15 +271,15 @@ export async function connectLierda(port, _settings, log = () => {}) {
           const tailAddress = app.address + app.data.length;
           const tail = await readRange(io, tailAddress, app.capacity - app.data.length, (end) =>
             onProgress(0.75 + 0.24 * (writeSize + end) / hardware.size, '回读应用区末尾'));
-          if (!tail.every((byte) => byte === 0xff)) throw new Error('应用区剩余空间未擦净。');
+          if (!tail.every((byte) => byte === 0xff)) throw new LocalizedError('应用区剩余空间未擦净。');
           await verifyPreserved(io, backup.bytes, hardware.preservedRanges, (end) =>
             onProgress(0.75 + 0.24 * (app.capacity + end) / hardware.size, '校验应用区外数据'));
-          writeLog('应用区外的全部内部 Flash 与烧录前一致。');
+          writeLog(t('应用区外的全部内部 Flash 与烧录前一致。'));
         } else {
           await verifyImages(io, writeImages, writeLog, (end) =>
             onProgress(0.75 + 0.24 * end / writeSize, '回读校验'));
           await verifyPreserved(io, backup.bytes, hardware.preservedRanges);
-          writeLog('引导元数据、工厂备份和校准区与烧录前一致。');
+          writeLog(t('引导元数据、工厂备份和校准区与烧录前一致。'));
         }
         interruptedBackup = undefined;
         resetAllowed = true;
@@ -294,13 +294,13 @@ export async function connectLierda(port, _settings, log = () => {}) {
       }
     },
     async reset() {
-      if (!isActive() || busy || !resetAllowed) throw new Error('请先完成写入和回读校验。');
+      if (!isActive() || busy || !resetAllowed) throw new LocalizedError('请先完成写入和回读校验。');
       busy = true;
       try {
         await synchronize(io, LPC_SYNC, 'LPC');
         const ack = await sendCommand(io, SYSTEM_RESET, EMPTY, { lpc: true });
         if (bytesHex(ack) !== '5a7a5a7a5a7a5a7a') {
-          throw new Error('复位响应不匹配 · ' + bytesHex(ack, ' '));
+          throw new LocalizedError(localizedMessage('复位响应不匹配 · @0', bytesHex(ack, ' ')));
         }
         resetAllowed = false;
       } finally {

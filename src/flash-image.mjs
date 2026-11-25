@@ -1,3 +1,4 @@
+import { LocalizedError, localizedMessage } from './i18n.mjs';
 import SparkMD5 from 'spark-md5';
 
 const sectorSize = 4096;
@@ -29,10 +30,10 @@ export function validateLayout(images, capacity) {
       size < 1 ||
       address + size > capacity
     ) {
-      throw new Error(`「${name}」的地址或大小超出 Flash 范围。`);
+      throw new LocalizedError(localizedMessage('「@0」的地址或大小超出 Flash 范围。', name));
     }
     if (Math.floor(address / sectorSize) * sectorSize < end) {
-      throw new Error(`「${name}」与其他固件占用了相同的擦除扇区。`);
+      throw new LocalizedError(localizedMessage('「@0」与其他固件占用了相同的擦除扇区。', name));
     }
     end = Math.ceil((address + size) / sectorSize) * sectorSize;
   }
@@ -44,12 +45,12 @@ export async function validateBootImage(data, offset, chip) {
 
 async function validateImage(data, offset, chip, boot) {
   const invalid = () =>
-    new Error(
-      `${boot ? '启动' : '应用'}镜像不完整，或镜像校验失败。请重新获取固件。`,
+    new LocalizedError(
+      localizedMessage('@0镜像不完整，或镜像校验失败。请重新获取固件。', localizedMessage(boot ? '启动' : '应用')),
     );
   if (offset < 0 || offset + 36 > data.length || data[offset] !== 0xe9) {
     if (!boot) throw invalid();
-    throw new Error(
+    throw new LocalizedError(
       '完整镜像缺少当前芯片所需的启动镜像。请确认文件是适配本板的完整 BIN。',
     );
   }
@@ -59,10 +60,10 @@ async function validateImage(data, offset, chip, boot) {
     data.byteLength - offset,
   );
   if (header.getUint16(12, true) !== chip.IMAGE_CHIP_ID) {
-    throw new Error('镜像头中的芯片型号与连接设备不匹配。');
+    throw new LocalizedError('镜像头中的芯片型号与连接设备不匹配。');
   }
   if (boot && header.getUint32(32, true) === 0xabcd5432) {
-    throw new Error(
+    throw new LocalizedError(
       '这个 BIN 是 ESP-IDF 应用镜像。请改用完整镜像，或按固件说明进行分段烧录。',
     );
   }
@@ -166,7 +167,7 @@ export async function validateCompleteImage(data, boot, chip, capacity) {
       }
     }
   }
-  throw new Error(
+  throw new LocalizedError(
     '完整 BIN 缺少有效的 ESP32 应用镜像或分区表。请重新获取适配本板的固件。',
   );
 }
@@ -195,7 +196,7 @@ export async function updateBootSettings(
   const capacity =
     size === 'keep' ? data[offset + 3] & 0xf0 : chip.FLASH_SIZES[size];
   if (![mode, frequency, capacity].every(Number.isInteger)) {
-    throw new Error('当前芯片不支持所选的 Flash 参数。');
+    throw new LocalizedError('当前芯片不支持所选的 Flash 参数。');
   }
   if (data[offset + 2] === mode && data[offset + 3] === (capacity | frequency))
     return data;
