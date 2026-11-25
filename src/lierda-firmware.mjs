@@ -15,7 +15,7 @@ export const lierdaBoards = Object.freeze([
   Object.freeze({
     model: 'lite',
     slug: 'lierda-lite',
-    name: 'NT26F6D0 语音通话版',
+    name: 'Lite NT26F6D0 语音通话版',
     chip: 'EC718PM',
     flashBytes: liteFlashBytes,
     release: liteRelease,

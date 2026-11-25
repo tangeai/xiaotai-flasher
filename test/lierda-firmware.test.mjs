@@ -8,7 +8,7 @@ import {
 test('selects the pinned Lite download and keeps Pro local when its online catalog is absent', () => {
   const [lite, pro] = lierdaBoards;
   const selected = prepareLierdaFirmware({ model: lite.model, origin: 'official' });
-  assert.equal(selected.boardModel, 'NT26F6D0 语音通话版');
+  assert.equal(selected.boardModel, 'Lite NT26F6D0 语音通话版');
   assert.equal(selected.filename, '2026_11_21_16_05_10_lite.binpkg');
   assert.equal(selected.release.version, '1.0.0 · xiaotai-lierda Lite');
   assert.equal(selected.release.byte_length, 3449160);
