@@ -185,6 +185,34 @@
         }
       ],
       "flash_bytes": 8388608
+    },
+    {
+      "slug": "lierda-lite",
+      "model": "Lite 语音通话版 · NT26F6D0",
+      "chip": "EC718PM",
+      "flash_bytes": 4194304,
+      "modem": "NT26F6D0",
+      "modempkg": "F6D_D",
+      "releases": [
+        {
+          "version": "1.0.0",
+          "status": "published",
+          "bin_url": "./firmware/lite-v1.0.0-41cfc6373f03c0d3bf4d480dfabec0c527bfc03b5fbdd4849e984715c266f98e.binpkg",
+          "source_filename": "2026_11_21_16_05_10_lite.binpkg",
+          "byte_length": 3449160,
+          "sha256": "41cfc6373f03c0d3bf4d480dfabec0c527bfc03b5fbdd4849e984715c266f98e",
+          "recommended": true
+        }
+      ]
+    },
+    {
+      "slug": "lierda-pro",
+      "model": "Pro 视频通话版 · NT26F9D0",
+      "chip": "EC718HM",
+      "flash_bytes": 8388608,
+      "modem": "NT26F9D0",
+      "modempkg": "F9D_D",
+      "releases": []
     }
   ]
 }

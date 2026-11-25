@@ -6,8 +6,7 @@ usage() {
 用法: deploy-prod.sh <命令>
 
   update        快进拉取、构建并发布
-  catalog       从 GitHub Releases 更新板卡目录，可加 --include-prerelease
-  catalog-lite  从 GitHub Releases 导入利尔达 Lite 正式版固件
+  catalog       从 GitHub Releases 同步 ESP32、BK7258 和利尔达 Lite、Pro，可加 --include-prerelease
   status        查看当前发布、源码提交、板卡目录和可用版本
   rollback 版本  切换到 status 列出的指定版本
   help          显示此帮助
@@ -62,6 +61,7 @@ if [[ "$command" == catalog ]]; then
   exec node "$repo/scripts/generate-boards.mjs" --output-dir "$root/board-catalog" "$@"
 fi
 
+# Older schedules may still refresh the legacy Lite directory.
 if [[ "$command" == catalog-lite ]]; then
   umask 022
   exec node "$repo/scripts/import-lierda-lite.mjs" --output-dir "$root/lierda-lite-firmware"

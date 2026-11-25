@@ -236,22 +236,24 @@ async function withLierdaAtPort(port, signal, usePort) {
   }
 }
 
-async function identifyLierdaAtPort(port) {
-  return withLierdaAtPort(port, undefined, async (writer, replies) => {
-    let vendor = false;
-    let model = false;
-    await withTimeout(writer.write(atIdentity), WRITE_TIMEOUT_MS, '发送 ATI 校验命令超时。');
-    try {
-      const acknowledged = await replies.readResult(AT_REPLY_MS, (line) => {
-        if (line === 'Lierda') vendor = true;
-        if (line === 'NT26F6D0' || line === 'NT26F9D0') model = true;
-      });
-      return acknowledged && vendor && model;
-    } catch (error) {
-      if (!(error instanceof SerialTimeout)) throw error;
-      return false;
-    }
-  });
+async function probeLierdaIdentity(writer, replies, timeoutMs = AT_REPLY_MS) {
+  let vendor = false;
+  let model = false;
+  await withTimeout(writer.write(atIdentity), WRITE_TIMEOUT_MS, '发送 ATI 校验命令超时。');
+  try {
+    const acknowledged = await replies.readResult(timeoutMs, (line) => {
+      if (line === 'Lierda') vendor = true;
+      if (line === 'NT26F6D0' || line === 'NT26F9D0') model = true;
+    });
+    return acknowledged && vendor && model;
+  } catch (error) {
+    if (!(error instanceof SerialTimeout)) throw error;
+    return false;
+  }
+}
+
+function identifyLierdaAtPort(port) {
+  return withLierdaAtPort(port, undefined, probeLierdaIdentity);
 }
 
 /** Verify the Lierda AT interface, then send the download reboot once. */
@@ -260,6 +262,11 @@ export async function requestLierdaDownloadMode(port, { signal, log = () => {}, 
     await withTimeout(writer.write(atProbe), WRITE_TIMEOUT_MS, '发送 AT 校验命令超时。');
     if (!await replies.readResult(timeoutMs)) throw new Error('AT 校验失败，请选择 Lierda At Port。');
     log('AT 串口校验通过。');
+    replies.clear();
+    signal?.throwIfAborted();
+    if (!await probeLierdaIdentity(writer, replies, timeoutMs)) {
+      throw new Error('无法确认利尔达 NT26F6D0 或 NT26F9D0 型号。可手动进入下载模式并选择 QDLoader。');
+    }
     replies.clear();
     signal?.throwIfAborted();
     await withTimeout(writer.write(atDownload), WRITE_TIMEOUT_MS, '发出下载复位命令未得到确认。');

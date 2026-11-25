@@ -1,6 +1,6 @@
 # 小钛固件烧录与串口日志工作台
 
-用浏览器通过 USB 串口烧录小钛或本地 ESP32 和 BK7258 固件，并在同一页面查看设备串口日志。前端使用 React + Vite，ESP32 烧录使用乐鑫 `esptool-js`，BK7258 使用 Beken UART 下载协议。工作台按静态站点部署，板卡目录通过独立 JSON 链接维护。
+用浏览器通过 USB 串口烧录 ESP32、BK7258 和利尔达（移芯）开发板，并在同一页面查看设备串口日志。工作台按静态站点部署，各平台共用板卡目录，可选择已发布的固件或本地文件。
 
 ## 功能
 
@@ -8,7 +8,8 @@
 | --- | --- |
 | ESP32 在线烧录 | 适用 ESP32、ESP32-S2、ESP32-S3、ESP32-C2、ESP32-C3、ESP32-C5、ESP32-C6、ESP32-H2、ESP32-P4 |
 | BK7258 在线烧录 | 支持原始 `all-app.bin` 从 `0x0` 写入，烧录后读取 Flash CRC 校验 |
-| 固件选择 | 已配置目录时默认显示小钛固件。也可导入本地完整 `.bin`。ESP32 和 BK7258 的完整 BIN 从 `0x0` 写入 |
+| 利尔达在线烧录 | 支持 Lite 语音通话版（NT26F6D0）和 Pro 视频通话版（NT26F9D0），按 BINPKG 内的分区烧录 |
+| 固件选择 | 已配置目录时默认显示小钛固件。也可导入本地完整 BIN 或利尔达 BINPKG。ESP32 和 BK7258 的完整 BIN 从 `0x0` 写入 |
 | 写入校验 | 校验在线 BIN 的 SHA‑256。ESP32 写入后对比 Flash 的 MD5，BK7258 写入后对比 Flash 的 CRC |
 | 串口日志 | 独立连接运行中的设备，或在烧录结束后自动打开。可发送文本指令、选择行尾、调整波特率、暂停滚动、清空、复制、下载和持续记录到本地文件夹 |
 | 高级设置 | 支持多 BIN 分段地址、烧录波特率、Flash 模式、频率、容量及复位方式。全片擦除默认关闭 |
@@ -76,27 +77,27 @@ ESP32 完整 BIN 写入前会检查启动镜像、分区表及对应芯片的应
 }
 ```
 
-源码自带空目录，可直接导入本地 BIN。通过安装脚本部署后，修改部署根目录下的 `boards-source.json` 并执行 `update`。独立静态托管时，可直接修改站点中的 `boards-source.json`。
+源码自带空目录，可直接导入本地固件。通过安装脚本部署后，修改部署根目录下的 `boards-source.json` 并执行 `update`。独立静态托管时，可直接修改站点中的 `boards-source.json`。
 
 ### 手动上传新固件
 
 如果旧部署没有固件目录，先运行 `sudo mkdir -p /opt/xiaotai-flasher/board-catalog/firmware`。
 
-1. 用 `sha256sum 新固件.bin` 计算摘要，将适配该板型、从 `0x0` 写入的完整 BIN 保留 Release 附件原名上传到服务器的 `/opt/xiaotai-flasher/board-catalog/firmware/`。BK7258 需使用原始 `all-app.bin`。
-2. 在仓库根目录的 [`boards.json`](boards.json) 对应板型下添加版本。`bin_url` 填 `./firmware/<原始文件名>`，`sha256` 填相同摘要。设为推荐版本时，去掉同一板型旧版本的 `recommended: true`。运行 `npm test` 检查格式和下载路径。
-3. BIN 可下载后，将更新后的 `boards.json` 上传到 `/opt/xiaotai-flasher/board-catalog/boards.json`，刷新页面确认新版本。前端无需重新构建。由人工维护目录时，避免运行会重新生成目录的 `catalog` 命令。
+1. 用 `sha256sum` 计算摘要，将固件放入服务器的 `/opt/xiaotai-flasher/board-catalog/firmware/`。ESP32 使用从 `0x0` 写入的完整 BIN，BK7258 使用原始 `all-app.bin`，均保留附件原名。利尔达使用完整 BINPKG，存储名为 `<产品>-v<版本号>-<SHA-256>.binpkg`，其中产品为 `lite` 或 `pro`。
+2. 参照 [`boards.json`](boards.json) 在对应板型下添加版本。`bin_url` 填 `./firmware/<存储文件名>`，`sha256` 填实际摘要。利尔达另填 `source_filename`（附件原名）和 `byte_length`。每块板只标记一个推荐版本。运行 `npm test` 检查格式和下载路径。
+3. 确认固件可下载后，将更新后的 `boards.json` 上传到 `/opt/xiaotai-flasher/board-catalog/boards.json`，刷新页面确认新版本。前端无需重新构建。由人工维护目录时，避免运行会重新生成目录的 `catalog` 命令。
 
 ### 从 GitHub Releases 生成目录
 
-在仓库根目录运行以下命令。`scripts/generate-boards.mjs` 读取 `tangeai/xiaotai-esp32` 和 `tangeai/xiaotai` 的 Release，自动配对板卡、完整镜像和 SHA‑256。
+在仓库根目录运行以下命令。生成器读取 `tangeai/xiaotai-esp32`、`tangeai/xiaotai` 和 `tangeai/xiaotai-lierda` 的 Release，生成 ESP32、BK7258、利尔达 Lite 和 Pro 共用的目录。
 
 ```bash
 node scripts/generate-boards.mjs --output-dir ./releases/board-catalog
 ```
 
-输出包含 `boards.json` 和 `firmware/`。将两者一起发布到同一 HTTPS 目录，再把 `boards_url` 指向生成的 `boards.json`。BIN 地址使用相对路径，由目录所在站点提供下载。站点与工作台不同源时，为 JSON 和 BIN 配置 CORS。
+输出包含 `boards.json` 和 `firmware/`。将两者一起发布到同一 HTTPS 目录，再把 `boards_url` 指向生成的 `boards.json`。固件地址使用相对路径，由目录所在站点提供下载。站点与工作台不同源时，为 JSON 和固件文件配置 CORS。
 
-默认收录正式版 ESP32 完整镜像和 BK7258 原始 `all-app.bin`。需要测试版时加 `--include-prerelease`，目录会标注测试版并优先推荐正式版。同一板型在两个仓库都有正式版时，优先推荐 `xiaotai-esp32` 的最新发布。生成器复用已经校验的 BIN，并在新目录的固件全部校验通过后替换 `boards.json`。GitHub API 限流时可提供 `GITHUB_TOKEN`。
+默认只收录正式版。显式加 `--include-prerelease` 可收录 ESP32、BK7258 和 Lite 的预发布版，页面标注测试版并优先推荐正式版。Pro 在线目录仅收录正式版。ESP32 的同一板型在两个仓库都有正式版时，优先推荐 `xiaotai-esp32` 的最新发布。生成器复用已校验的文件，先准备固件，再原子替换 `boards.json`。某个来源同步失败时，保留该来源上次发布的记录，已校验的其他来源可以更新，命令返回失败。GitHub API 限流时可提供 `GITHUB_TOKEN`。
 
 ### 板卡 JSON 格式
 
@@ -126,10 +127,9 @@ node scripts/generate-boards.mjs --output-dir ./releases/board-catalog
 - `slug` 为唯一板卡标识。后台可通过 `/web-flasher?board=lckfb-esp32s3` 预选该板。
 - 可用 `flash_bytes` 声明要求的 Flash 容量。声明后，设备检测到的容量必须一致。
 - 每块板的 `version` 唯一。`status` 支持 `draft`、`published`、`offline`，页面仅显示 `published`。每块板最多有一个推荐版本。
-- `bin_url` 指向完整 BIN，相对地址以板卡 JSON 的位置为准。`sha256` 填实际文件的 64 位十六进制摘要。
-- 使用仓库自带的同源 Nginx 路由时，BIN 必须位于 `firmware/`，使用原始附件名，以字母或数字开头，允许 ASCII 字母、数字、点、下划线、加号和连字符，以 `.bin` 结尾。不同内容使用不同文件名。由旧版迁移时先更新 Nginx 片段并重载，再上传所有原名 BIN，最后替换 `boards.json`。
-- JSON 和 BIN 跨域托管时，下载域名需允许工作台域名读取。例如 `Access-Control-Allow-Origin: https://xiaotai.chat`。
-- 在同一个目录链接下发新版固件时，上传新 BIN 并更新板卡 JSON 即可。
+- `bin_url` 指向完整固件，相对地址以板卡 JSON 的位置为准。`sha256` 填实际文件的 64 位十六进制摘要。
+- 使用仓库自带的同源 Nginx 路由时，固件位于 `firmware/`，文件名以字母或数字开头，允许 ASCII 字母、数字、点、下划线、加号和连字符，以 `.bin` 或 `.binpkg` 结尾。不同内容使用不同文件名。由旧版迁移时先更新 Nginx 片段并重载，确认固件可下载后再替换 `boards.json`。
+- JSON 和固件跨域托管时，下载域名需允许工作台域名读取，例如 `Access-Control-Allow-Origin: https://xiaotai.chat`。
 
 ## 安装和部署
 
@@ -210,12 +210,12 @@ sudo /opt/xiaotai-flasher/deploy-prod.sh update
 
 ## 利尔达（移芯）烧录
 
-在芯片平台选「利尔达（移芯）」，点「连接设备」。页面会使用已授权的唯一匹配串口，切换到下载模式并等待 QDLoader。首次使用时，按浏览器提示分别授权运行态 AT 口和下载口。已在下载模式的设备可直接授权 QDLoader。确认型号后选择固件开始烧录。
+在芯片平台选「利尔达（移芯PM HM系列）」，点「连接设备」。页面会使用已授权的唯一匹配串口，切换到下载模式并等待 QDLoader。首次使用时，按浏览器提示分别授权运行态 AT 口和下载口。已在下载模式的设备可直接授权 QDLoader。确认型号后选择固件开始烧录。
 
 切换板型时保留「小钛固件」或「本地 BINPKG」，重新选择该板型的本地文件。连接后依据底包指纹和应用布局识别芯片及支持的 Flash 配置。设备与所选板型一致、固件校验通过后才能烧录。擦除前再次核对当前设备的完整底包和应用布局。
 
-- Lite NT26F6D0 语音通话版使用 F6D_D。支持已导入的小钛正式版固件或匹配的本地完整 BINPKG。写前备份 4 MiB 内部 Flash，写入后回读校验。
-- Pro 视频通话版 NT26F9D0 使用 F9D_D。可选「小钛固件」中的测试版或导入与现有底包匹配的本地完整 BINPKG。备份 8 MiB 后只更新 APP，回读校验应用并核对其余内部 Flash。
+- Lite 语音通话版 · NT26F6D0 使用 F6D_D。支持已导入的小钛正式版固件或匹配的本地完整 BINPKG。写前备份 4 MiB 内部 Flash，写入后回读校验。
+- Pro 视频通话版 · NT26F9D0 使用 F9D_D。「小钛固件」提供已导入的 Pro 正式版，也可在「本地 BINPKG」选择与现有底包匹配的完整固件包。备份 8 MiB 后只更新 APP，回读校验应用并核对其余内部 Flash。
 
 ### 更新 Lite 在线版本
 
@@ -225,20 +225,22 @@ sudo /opt/xiaotai-flasher/deploy-prod.sh update
 
 1. 先在生产源码中快进拉取此次更新，安装 AgentBoot 的 Git 忽略规则。默认路径下运行 `sudo git -C /opt/xiaotai-flasher/xiaotai-flasher pull --ff-only`。
 2. 将对应版本的 USB AgentBoot 原件放到生产源码目录的 `public/lierda/agentboot-ec718pm-usb.bin`。默认完整路径是 `/opt/xiaotai-flasher/xiaotai-flasher/public/lierda/agentboot-ec718pm-usb.bin`。核对下文的大小和 SHA-256 后，运行 `sudo env FORCE_UPDATE=1 /opt/xiaotai-flasher/deploy-prod.sh update`，确保已发布相同源码提交的站点也会把 AgentBoot 纳入本次构建。
-3. 将仓库 Nginx 配置中的 Lite 路由合入站点 HTTPS 配置。运行 `sudo nginx -t`，通过后运行 `sudo systemctl reload nginx`。
-4. 导入 Lite 正式版。此后发布新版本时可单独重跑导入命令。
+3. 更新站点的 Nginx 配置，使原有的 `/web-flasher/board-catalog/firmware/` 路径同时提供 `.bin` 和 `.binpkg`。运行 `sudo nginx -t`，通过后运行 `sudo systemctl reload nginx`。
+4. 运行工作台原有的目录同步命令。后续任一平台发布新版时，都运行同一条命令：
 
 ```bash
-sudo /opt/xiaotai-flasher/deploy-prod.sh catalog-lite
+sudo /opt/xiaotai-flasher/deploy-prod.sh catalog
 ```
 
-导入命令校验附件 SHA-256、NT26F6D0 F6D_D 的底包及应用布局。服务器以带摘要的文件名保存固件，随后更新 `/web-flasher/lierda/firmware/lite.json`。页面显示 GitHub Release 的附件原名。目录与固件保存在部署根目录的 `lierda-lite-firmware/`。版本列表按版本号降序排列，推荐最新正式版。首次读取目录失败时，页面提供内置的 Lite 固件。重新选择该板型会再读取目录。
+工作台从 `boards-source.json` 指向的同一份 `boards.json` 读取各平台版本。利尔达固件还会校验模组、底包及应用分区，网页显示 Release 附件原名，按版本号推荐最新正式版。在线目录不可用时，可选择本地固件。
+
+旧部署若有 `catalog-lite` 定时任务，它仍只刷新旧版 Lite 目录。统一的 `catalog` 任务生效后即可移除旧任务。
 
 ### 更新 Pro 在线版本
 
-准备获准部署的完整 F9D_D BINPKG 和 `pro.json`，在站点同源的 `/web-flasher/lierda/firmware/` 下提供这两个文件。`pro.json` 填写 `modem`（NT26F9D0）、`modempkg`（F9D_D）、`version`、`filename`、`byte_length` 和 `sha256`。先发布固件文件，再更新目录。可通过站点单独配置的静态路径提供这两个文件，或将获准分发的文件作为构建输入放入 `public/lierda/firmware/`。
+首次发布前，选择 Pro 的「小钛固件」会显示暂无正式版，调试包可通过「本地 BINPKG」选择。
 
-`releases/lierda/firmware/` 下的测试包及本机生成的 `releases/preview-online.mjs` 仅用于本机联调。
+在 [小钛利尔达 Releases](https://github.com/tangeai/xiaotai-lierda/releases) 创建 `pro-vX.Y.Z` 正式版（例如 `pro-v1.0.0`），上传一个完整的 NT26F9D0 / F9D_D `.binpkg` 和对应的 `SHA256SUMS.txt`。服务器下一次运行上述 `catalog` 命令后，刷新 Pro 页面即可选到新版本。
 
 可通过 /web-flasher/?board=lierda-lite 或 /web-flasher/?board=lierda-pro 直达对应型号。两款机型共用厂商的 50,032 字节 USB AgentBoot，构建前将原件放到 public/lierda/agentboot-ec718pm-usb.bin。SHA-256 为 045bd0c74a030143230f07484e4711600005b992e3b0776be042e42d141a38e5。
 

@@ -15,7 +15,12 @@ test('the manual firmware catalog loads and uses the Nginx BIN paths', () => {
     for (const release of board.releases) {
       if (release.status !== 'published') continue;
       assert.match(release.sha256, /^[a-f0-9]{64}$/);
-      assert.match(release.bin_url, /^\.\/firmware\/[A-Za-z0-9][A-Za-z0-9._+-]{0,249}\.bin$/);
+      if (board.slug === 'lierda-lite' || board.slug === 'lierda-pro') {
+        const product = board.slug.slice('lierda-'.length);
+        assert.equal(release.bin_url, `./firmware/${product}-v${release.version}-${release.sha256}.binpkg`);
+      } else {
+        assert.match(release.bin_url, /^\.\/firmware\/[A-Za-z0-9][A-Za-z0-9._+-]{0,249}\.bin$/);
+      }
       assert.notEqual(release.bin_url, `./firmware/${release.sha256}.bin`);
     }
   }

@@ -150,12 +150,23 @@ test('gives a briefly missing granted port a chance to enumerate before promptin
   assert.equal(await selectLierdaPort(serial), port);
 });
 
-test('validates the selected port before sending the exact one-shot reboot', async () => {
-  const port = atPort({ probe: ['AT\r\nO', 'K\r', '\n'], reboot: ['\r\nOK\r\n'] });
-  const result = await requestLierdaDownloadMode(port, { timeoutMs: 100 });
-  assert.deepEqual(result, { acknowledged: true });
-  assert.deepEqual(port.sent, [atProbe, enterDownload]);
-  assert.equal(port.closed, true);
+test('identifies both supported models on the selected port before sending the exact one-shot reboot', async () => {
+  for (const model of ['NT26F6D0', 'NT26F9D0']) {
+    const port = atPort({ probe: ['AT\r\nO', 'K\r', '\n'], identity: ['Lierda\r', '\n' + model + '\r\nOK\r\n'], reboot: ['\r\nOK\r\n'] });
+    const result = await requestLierdaDownloadMode(port, { timeoutMs: 100 });
+    assert.deepEqual(result, { acknowledged: true });
+    assert.deepEqual(port.sent, [atProbe, atIdentity, enterDownload]);
+    assert.equal(port.closed, true);
+  }
+});
+
+test('a generic AT response or an unsupported identity cannot reset the modem', async () => {
+  for (const identity of [[], ['OK\r\n'], ['Lierda\r\nUNKNOWN\r\nOK\r\n'], ['Other\r\nNT26F6D0\r\nOK\r\n']]) {
+    const port = atPort({ probe: ['OK\r\n'], identity });
+    await assert.rejects(requestLierdaDownloadMode(port, { timeoutMs: 50 }), /手动进入下载模式.*QDLoader/);
+    assert.deepEqual(port.sent, [atProbe, atIdentity]);
+    assert.equal(port.closed, true);
+  }
 });
 
 test('a mismatched USB port never opens or sends data', async () => {
@@ -180,17 +191,17 @@ test('an AT error stops before sending the reboot', async () => {
 });
 
 test('a rejected reboot is not repeated', async () => {
-  const port = atPort({ probe: ['OK\r\n'], reboot: ['ERROR\r\n'] });
+  const port = atPort({ probe: ['OK\r\n'], identity: ['Lierda\r\nNT26F6D0\r\nOK\r\n'], reboot: ['ERROR\r\n'] });
   await assert.rejects(requestLierdaDownloadMode(port, { timeoutMs: 100 }), /拒绝进入下载模式/);
-  assert.deepEqual(port.sent, [atProbe, enterDownload]);
+  assert.deepEqual(port.sent, [atProbe, atIdentity, enterDownload]);
   assert.equal(port.closed, true);
 });
 
 test('accepts a USB disconnect before the reboot reply and releases both locks', async () => {
-  const port = atPort({ probe: ['OK\r\n'], disconnect: true });
+  const port = atPort({ probe: ['OK\r\n'], identity: ['Lierda\r\nNT26F9D0\r\nOK\r\n'], disconnect: true });
   const result = await requestLierdaDownloadMode(port, { timeoutMs: 100 });
   assert.deepEqual(result, { acknowledged: false });
-  assert.deepEqual(port.sent, [atProbe, enterDownload]);
+  assert.deepEqual(port.sent, [atProbe, atIdentity, enterDownload]);
   assert.equal(port.closed, true);
 });
 

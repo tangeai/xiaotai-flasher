@@ -1,8 +1,11 @@
 import { chips } from './chips.mjs';
+import { lierdaBoards } from './lierda-boards.mjs';
 
 const versionDigest = /^[a-f0-9]{64}$/i;
 const boardSlug = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const releaseStates = new Set(['draft', 'published', 'offline']);
+const packageName = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,249}\.binpkg$/i;
+const numericVersion = /^(?:0|[1-9]\d{0,8})\.(?:0|[1-9]\d{0,8})\.(?:0|[1-9]\d{0,8})$/;
 
 export function canonicalBoardSlug(slug) {
   return slug === 'm5stack-cores3-lite-ili9342c' ? 'm5stack-cores3-lite' : slug;
@@ -32,6 +35,14 @@ export function publishedBoards(data, catalogURL) {
     throw new Error('固件配置必须包含 boards 数组。');
   const slugs = new Set();
   return data.boards.flatMap((board) => {
+    const hardware = lierdaBoards.find(({ slug }) => slug === board?.slug);
+    if (hardware) {
+      // An invalid BINPKG entry must never hide another platform's catalog.
+      if (data.boards.filter((candidate) => candidate?.slug === hardware.slug).length !== 1) return [];
+      const entry = publishedLierdaBoard(board, hardware, catalogURL);
+      return entry ? [entry] : [];
+    }
+    if (lierdaBoards.some(({ chip }) => chip === board?.chip)) return [];
     if (
       typeof board?.slug !== 'string' ||
       !boardSlug.test(board.slug) ||
@@ -96,6 +107,33 @@ export function publishedBoards(data, catalogURL) {
       },
     ];
   });
+}
+
+function publishedLierdaBoard(board, hardware, catalogURL) {
+  if (board.chip !== hardware.chip || board.flash_bytes !== hardware.flashBytes ||
+      board.modem !== hardware.modem || board.modempkg !== hardware.modempkg ||
+      typeof board.model !== 'string' || !board.model.trim() || !Array.isArray(board.releases)) return null;
+  const versions = [];
+  const seen = new Set();
+  for (const release of board.releases) {
+    if (!releaseStates.has(release?.status)) return null;
+    if (release.status !== 'published') continue;
+    if (release.prerelease !== undefined && typeof release.prerelease !== 'boolean') return null;
+    if (hardware.model === 'pro-f9' && release.prerelease) continue;
+    const { version, sha256, source_filename: filename, byte_length: bytes } = release;
+    if (typeof version !== 'string' || !numericVersion.test(version) || seen.has(version) ||
+        typeof sha256 !== 'string' || !versionDigest.test(sha256) ||
+        typeof filename !== 'string' || !packageName.test(filename) ||
+        !Number.isSafeInteger(bytes) || bytes <= 0 || bytes > hardware.flashBytes + 0x10000 ||
+        (release.recommended !== undefined && typeof release.recommended !== 'boolean')) return null;
+    const prefix = hardware.slug.slice('lierda-'.length);
+    const path = `./firmware/${prefix}-v${version}-${sha256.toLowerCase()}.binpkg`;
+    if (release.bin_url !== path) return null;
+    seen.add(version);
+    versions.push({ ...release, filename, bin_url: linkedURL(path, catalogURL).href });
+  }
+  if (versions.filter((release) => release.recommended).length > 1) return null;
+  return { slug: hardware.slug, model: board.model.trim(), chip: hardware.chip, flashBytes: hardware.flashBytes, versions };
 }
 
 async function readJSON(url, signal) {

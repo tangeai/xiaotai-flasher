@@ -1,21 +1,34 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {
-  lierdaBoards, loadLierdaLiteReleases, loadLierdaProRelease, prepareLierdaFirmware, resolveLierdaFirmware,
-} from '../src/lierda-firmware.mjs';
+import { loadBoards, publishedBoards } from '../src/catalog.mjs';
+import { lierdaBoards, prepareLierdaFirmware, resolveLierdaFirmware } from '../src/lierda-firmware.mjs';
 
-test('selects the pinned Lite download and keeps Pro local when its online catalog is absent', () => {
-  const [lite, pro] = lierdaBoards;
-  const selected = prepareLierdaFirmware({ model: lite.model, origin: 'official' });
-  assert.equal(selected.boardModel, 'Lite NT26F6D0 语音通话版');
-  assert.equal(selected.filename, '2026_11_21_16_05_10_lite.binpkg');
-  assert.equal(selected.release.version, '1.0.0 · xiaotai-lierda Lite');
-  assert.equal(selected.release.byte_length, 3449160);
-  assert.equal(selected.chip, 'EC718PM');
-  assert.equal(pro.slug, 'lierda-pro');
-  assert.equal(pro.release, undefined);
-  assert.throws(() => prepareLierdaFirmware({ model: pro.model, origin: 'official' }), /本地 F9D_D/);
+const base = 'https://host.test/web-flasher/';
+const catalogURL = base + 'board-catalog/boards.json';
+
+function entry(hardware, releases) {
+  return {
+    slug: hardware.slug, model: hardware.name, chip: hardware.chip,
+    modem: hardware.modem, modempkg: hardware.modempkg, flash_bytes: hardware.flashBytes,
+    releases,
+  };
+}
+
+function packageRelease(product, sha256 = 'a'.repeat(64), version = '1.0.0') {
+  return {
+    version, status: 'published', bin_url: `./firmware/${product}-v${version}-${sha256}.binpkg`,
+    source_filename: `2026_11_21_16_05_10_${product}.binpkg`, byte_length: 3, sha256,
+  };
+}
+
+test('an empty or pre-Lierda catalog does not enable a built-in online firmware', () => {
+  assert.deepEqual(publishedBoards({ boards: [] }, catalogURL), []);
+  for (const hardware of lierdaBoards) {
+    const [board] = publishedBoards({ boards: [entry(hardware, [])] }, catalogURL);
+    assert.deepEqual(board.versions, []);
+    assert.throws(() => prepareLierdaFirmware({ model: hardware.model, origin: 'official' }), /暂无可选/);
+  }
 });
 
 test('routes a complete local Pro package for APP-only parsing', async () => {
@@ -51,115 +64,70 @@ test('rejects local files that change size during a read and aborted selections'
   await assert.rejects(resolveLierdaFirmware(firmware, signal), /selection cancelled/);
 });
 
-test('loads the same-origin Pro release and downloads its exact bytes for APP staging', async (t) => {
-  const bytes = Uint8Array.of(0x42, 0x49, 0x4e);
-  const hash = Buffer.from(await crypto.subtle.digest('SHA-256', bytes)).toString('hex');
-  const base = 'https://host.test/web-flasher/';
-  const manifest = {
-    modem: 'NT26F9D0', modempkg: 'F9D_D',
-    version: 'repair3 测试版', filename: 'sample.binpkg', byte_length: bytes.length, sha256: hash,
-  };
-  const urls = [];
-  t.mock.method(globalThis, 'fetch', async (url) => {
-    urls.push(String(url));
-    return urls.length === 1 ? Response.json(manifest) : new Response(bytes);
-  });
-  const release = await loadLierdaProRelease(undefined, base);
-  const selection = prepareLierdaFirmware({ model: 'pro-f9', origin: 'official', proRelease: release }, 0x800000);
-  assert.deepEqual(await resolveLierdaFirmware(selection), {
-    bytes, model: 'pro-f9', stage: 'app', filename: 'sample.binpkg', sha256: hash,
-  });
-  assert.deepEqual(urls, [
-    base + 'lierda/firmware/pro.json',
-    base + 'lierda/firmware/sample.binpkg',
-  ]);
-});
+for (const hardware of lierdaBoards) {
+  test(`${hardware.name} loads its selected original filename and verifies the shared catalog binary`, async (t) => {
+    const bytes = Uint8Array.of(0x42, 0x49, 0x4e);
+    const hash = Buffer.from(await crypto.subtle.digest('SHA-256', bytes)).toString('hex');
+    const product = hardware.slug.slice('lierda-'.length);
+    const older = packageRelease(product, hash);
+    const latest = { ...packageRelease(product, '1'.repeat(64), '1.0.1'), recommended: true };
+    const calls = [];
+    t.mock.method(globalThis, 'fetch', async (url) => {
+      calls.push(String(url));
+      if (calls.length === 1) return Response.json({ boards_url: './board-catalog/boards.json' });
+      if (calls.length === 2) return Response.json({ boards: [entry(hardware, [latest, older])] });
+      return new Response(bytes);
+    });
 
-test('missing and mismatched Pro catalog entries cannot enable online flashing', async (t) => {
-  const base = 'https://host.test/web-flasher/';
-  const mocked = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 404 }));
-  assert.equal(await loadLierdaProRelease(undefined, base), null);
-  const valid = {
-    modem: 'NT26F9D0', modempkg: 'F9D_D', version: '测试版', filename: 'f9.binpkg', byte_length: 1,
-    sha256: '1'.repeat(64),
-  };
+    const [board] = await loadBoards(new URL('boards-source.json', base));
+    assert.equal(board.slug, hardware.slug);
+    assert.equal(board.model, hardware.name);
+    assert.equal(board.versions[0].recommended, true);
+    const selectedRelease = board.versions.find((release) => release.version === older.version);
+    const selected = prepareLierdaFirmware({ model: hardware.model, origin: 'official', selectedRelease }, hardware.flashBytes);
+    assert.equal(selected.boardModel, hardware.name);
+    assert.equal(selected.filename, older.source_filename);
+    assert.deepEqual(await resolveLierdaFirmware(selected), {
+      bytes, model: hardware.model, stage: 'app', filename: older.source_filename, sha256: hash,
+    });
+    assert.deepEqual(calls, [base + 'boards-source.json', catalogURL, new URL(older.bin_url, catalogURL).href]);
+  });
+}
+
+test('malformed or conflicting BINPKG records leave other platforms available', () => {
+  const [lite, pro] = lierdaBoards;
+  const valid = packageRelease('pro');
+  const stock = { slug: 'stock', model: 'Stock', chip: 'ESP32', releases: [{
+    version: '1', status: 'published', sha256: 'f'.repeat(64), bin_url: './legacy.bin',
+  }] };
+  const keep = [stock, entry(lite, [packageRelease('lite')])];
+  const expected = keep.map((board) => board.slug);
+  const listed = (records) => publishedBoards({ boards: [...keep, ...records] }, catalogURL).map((board) => board.slug);
   for (const mismatch of [
-    { modem: 'NT26F6D0' }, { modempkg: 'F6D_D' }, { filename: '../f9.binpkg' },
-    { byte_length: 0x810001 }, { sha256: 'bad hash' },
+    { modem: 'NT26F6D0' }, { modempkg: 'F6D_D' }, { chip: 'ESP32' }, { flash_bytes: 0x400000 },
+    { releases: [valid, valid] }, { releases: null },
   ]) {
-    mocked.mock.mockImplementation(async () => Response.json({ ...valid, ...mismatch }));
-    await assert.rejects(loadLierdaProRelease(undefined, base), /固件目录配置无效/);
+    assert.deepEqual(listed([{ ...entry(pro, [valid]), ...mismatch }]), expected);
   }
-});
-
-test('loads selectable same-origin Lite releases and resolves the chosen older version', async (t) => {
-  const base = 'https://host.test/web-flasher/';
-  const bytes = Uint8Array.of(0x42, 0x49, 0x4e);
-  const hash = Buffer.from(await crypto.subtle.digest('SHA-256', bytes)).toString('hex');
-  const older = {
-    modem: 'NT26F6D0', modempkg: 'F6D_D',
-    version: '0.2.0', filename: `lite-v0.2.0-${hash}.binpkg`, byte_length: bytes.length, sha256: hash,
-    source_filename: '2026_10_20_12_00_00_lite.binpkg',
-  };
-  const current = {
-    ...older, version: '0.3.0', filename: 'lite-current.binpkg', source_filename: 'new_lite.binpkg', recommended: true,
-    sha256: '1'.repeat(64),
-  };
-  const urls = [];
-  t.mock.method(globalThis, 'fetch', async (url) => {
-    urls.push(String(url));
-    return urls.length === 1 ? Response.json({ releases: [current, older] }) : new Response(bytes);
-  });
-
-  const releases = await loadLierdaLiteReleases(undefined, base);
-  assert.deepEqual(releases.map(({ version, recommended }) => [version, recommended]), [
-    ['0.3.0', true],
-    ['0.2.0', false],
-  ]);
-  const firmware = prepareLierdaFirmware(
-    { model: 'lite', origin: 'official', selectedRelease: releases[1] },
-    0x400000,
-  );
-  assert.equal(firmware.release.version, '0.2.0');
-  assert.deepEqual(await resolveLierdaFirmware(firmware), {
-    bytes, model: 'lite', stage: 'app', filename: older.source_filename, sha256: hash,
-  });
-  assert.deepEqual(urls, [base + 'lierda/firmware/lite.json', base + 'lierda/firmware/' + older.filename]);
-});
-
-test('displays the original 1.0.0 asset name with a pre-upgrade Lite catalog', async (t) => {
-  const pinned = lierdaBoards[0].release;
-  const filename = `lite-v1.0.0-${pinned.sha256}.binpkg`;
-  const base = 'https://host.test/web-flasher/';
-  t.mock.method(globalThis, 'fetch', async () => Response.json({ releases: [{
-    modem: 'NT26F6D0', modempkg: 'F6D_D', version: '1.0.0', filename,
-    byte_length: pinned.byte_length, sha256: pinned.sha256,
-  }] }));
-  const [release] = await loadLierdaLiteReleases(undefined, base);
-  assert.equal(release.filename, pinned.filename);
-  assert.equal(release.bin_url, base + 'lierda/firmware/' + filename);
-});
-
-test('validates Lite manifest identity, file bounds, and unique version labels', async (t) => {
-  const base = 'https://host.test/web-flasher/';
-  const mocked = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 404 }));
-  assert.equal(await loadLierdaLiteReleases(undefined, base), null);
-  const valid = {
-    modem: 'NT26F6D0', modempkg: 'F6D_D', version: '0.2.0',
-    filename: 'lite.binpkg', byte_length: 1, sha256: '1'.repeat(64),
-  };
   for (const mismatch of [
-    { modem: 'NT26F9D0' }, { modempkg: 'F9D_D' }, { filename: '../sample.binpkg' },
-    { source_filename: '../sample.binpkg' },
-    { byte_length: 0x410001 }, { sha256: 'bad hash' },
+    { bin_url: '../bad.binpkg' }, { bin_url: packageRelease('lite').bin_url }, { source_filename: '../bad.binpkg' },
+    { version: 'Pro 测试版' }, { byte_length: 0x810001 }, { sha256: 'bad' }, { recommended: 'yes' },
   ]) {
-    mocked.mock.mockImplementation(async () => Response.json({ releases: [{ ...valid, ...mismatch }] }));
-    await assert.rejects(loadLierdaLiteReleases(undefined, base), /固件目录配置无效/);
+    assert.deepEqual(listed([entry(pro, [{ ...valid, ...mismatch }])]), expected);
   }
+  assert.deepEqual(listed([entry(pro, [valid]), entry(pro, [])]), expected);
+});
 
-  mocked.mock.mockImplementation(async () => Response.json({ releases: [valid, { ...valid, filename: 'other.binpkg' }] }));
-  await assert.rejects(loadLierdaLiteReleases(undefined, base), /重复版本/);
-
-  const pinned = prepareLierdaFirmware({ model: 'lite', origin: 'official' });
-  assert.equal(pinned.filename, '2026_11_21_16_05_10_lite.binpkg');
+test('only published BINPKGs appear and Pro excludes prereleases', () => {
+  const [lite, pro] = lierdaBoards;
+  const records = (product) => [
+    { ...packageRelease(product, 'b'.repeat(64), '2.0.0'), prerelease: true },
+    { ...packageRelease(product, 'c'.repeat(64), '3.0.0'), status: 'draft' },
+    { ...packageRelease(product), recommended: true },
+  ];
+  const [voice, video] = publishedBoards({ boards: [entry(lite, records('lite')), entry(pro, records('pro'))] }, catalogURL);
+  assert.deepEqual(voice.versions.map((release) => release.version), ['2.0.0', '1.0.0']);
+  assert.equal(voice.versions[0].prerelease, true);
+  assert.equal(voice.versions[1].recommended, true);
+  assert.deepEqual(video.versions.map((release) => release.version), ['1.0.0']);
 });

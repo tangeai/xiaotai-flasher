@@ -12,7 +12,6 @@ import {
   LierdaFlashSummary,
   matchesLierdaDevice,
   useLierdaPreflight,
-  useLierdaReleases,
 } from './lierda-ui.jsx';
 import { bkSettingFields, settingFields } from './settings.mjs';
 import { useWorkbench } from './useWorkbench.js';
@@ -25,7 +24,10 @@ const recommendedVersion = (board) =>
   board?.versions.find((version) => version.recommended)?.version ??
   board?.versions[0]?.version ??
   '';
-const platformFor = (chip) => (chip === 'BK7258' ? 'bk7258' : 'esp32');
+function platformFor(chip) {
+  if (chip === 'BK7258') return 'bk7258';
+  return lierdaBoards.some((board) => board.chip === chip) ? 'lierda' : 'esp32';
+}
 let nextSegmentId = 0;
 const newSegment = () => ({ id: nextSegmentId++, file: null, offset: '' });
 
@@ -859,6 +861,7 @@ export function App() {
   const workbench = useWorkbench();
   const [catalog, setCatalog] = useState({
     boards: [],
+    loading: true,
     message: '正在读取固件目录…',
   });
   const [requestedLierdaBoard] = useState(() =>
@@ -866,17 +869,16 @@ export function App() {
   );
   const [originChoice, setOrigin] = useState(requestedLierdaBoard ? null : 'local');
   const [platform, setPlatform] = useState(requestedLierdaBoard ? 'lierda' : 'esp32');
-  const [lierdaChoice, setLierdaChoice] = useState(() =>
+  const [lierdaSelection, setLierdaChoice] = useState(() =>
     initialLierdaSelection(requestedLierdaBoard),
   );
   const lierda = platform === 'lierda';
-  const lierdaBoard = lierdaBoards.find(({ model }) => model === lierdaChoice.model);
-  const lierdaReleases = useLierdaReleases(lierdaBoard, lierda);
-  const lierdaRelease = lierdaReleases?.find(({ version }) => version === lierdaChoice.liteVersion)
+  const lierdaBoard = lierdaBoards.find(({ model }) => model === lierdaSelection.model);
+  const onlineBoard = catalog.boards.find(({ slug }) => slug === lierdaBoard.slug);
+  const lierdaReleases = catalog.loading ? undefined : catalog.unavailable ? null : onlineBoard?.versions ?? [];
+  const lierdaRelease = lierdaReleases?.find(({ version }) => version === lierdaSelection.versions[lierdaBoard.model])
     ?? lierdaReleases?.find(({ recommended }) => recommended)
     ?? lierdaReleases?.[0];
-  const lierdaOrigin = lierdaChoice.origin ?? (lierdaRelease ? 'official' : 'local');
-  const lierdaSelection = { ...lierdaChoice, origin: lierdaOrigin };
   const lierdaPreflight = useLierdaPreflight(lierdaSelection, lierda);
   const [selection, setSelection] = useState(() => ({
     slug: '',
@@ -924,13 +926,13 @@ export function App() {
         if (abort.signal.aborted) return;
         const requestedBoard = boards.find((board) => board.slug === requested) ??
           boards.find((board) => board.slug === canonicalBoardSlug(requested));
-        const board = requestedBoard ?? boards[0];
+        const board = requestedBoard ?? boards.find((entry) => platformFor(entry.chip) !== 'lierda');
         setCatalog({
           boards,
           message:
             requested && !requestedBoard
               ? '这块开发板暂无已发布的在线固件，可导入本地 BIN。'
-              : boards.length
+              : board
                 ? ''
                 : '暂无已发布的小钛固件，可导入本地 BIN。',
         });
@@ -949,6 +951,7 @@ export function App() {
         console.error('Firmware catalog:', error);
         setCatalog({
           boards: [],
+          unavailable: true,
           message: '在线固件目录暂不可用，可导入本地 BIN。',
         });
       });
@@ -962,11 +965,10 @@ export function App() {
       return {
         ...current,
         model: detectedLierdaBoard.model,
-        origin: current.origin ?? lierdaOrigin,
         file: null,
       };
     });
-  }, [detectedLierdaBoard, lierdaOrigin]);
+  }, [detectedLierdaBoard]);
 
   useEffect(() => {
     const changed = () => setFullscreen(Boolean(document.fullscreenElement));
@@ -995,7 +997,6 @@ export function App() {
       ...current,
       model,
       modelChosen: true,
-      origin: current.origin ?? lierdaOrigin,
       file: null,
     }));
   }
@@ -1218,7 +1219,7 @@ export function App() {
             >
               <option value="esp32">乐鑫 Espressif（ESP32 系列）</option>
               <option value="bk7258">博通集成 Beken（BK7258）</option>
-              <option value="lierda">利尔达（移芯）</option>
+              <option value="lierda">利尔达（移芯PM HM系列）</option>
             </select>
           </label>
           <p

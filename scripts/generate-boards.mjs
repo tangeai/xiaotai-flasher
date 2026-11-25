@@ -1,14 +1,16 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { link, mkdir, mkdtemp, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { Readable, Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { setTimeout as wait } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
+import { pathToFileURL } from 'node:url';
 
 import { canonicalBoardSlug } from '../src/catalog.mjs';
 import { chips } from '../src/chips.mjs';
+import { collectLierdaBoards } from './import-lierda.mjs';
 
 const apiRoot = 'https://api.github.com/repos/';
 const espRepo = 'tangeai/xiaotai-esp32';
@@ -440,7 +442,7 @@ async function mirrorImage(image, destination, temporary) {
   }
 }
 
-async function generate(output, includePrerelease) {
+async function collectBinBoards(firmware, temporary, includePrerelease) {
   const [espReleases, archiveReleases] = await Promise.all([
     listReleases(espRepo, includePrerelease),
     listReleases(archiveRepo, includePrerelease),
@@ -453,32 +455,75 @@ async function generate(output, includePrerelease) {
     archived.push(...await archiveEntries(release, blobCache));
   const { catalog, images } = assemble([...esp, ...archived]);
   console.log(`正在校验 ${images.length} 个完整 BIN…`);
+  for (let start = 0; start < images.length; start += 3) {
+    const batch = images.slice(start, start + 3).map((image) =>
+      mirrorImage(image, join(firmware, image.filename), join(temporary, image.filename)),
+    );
+    const results = await Promise.allSettled(batch);
+    const failed = results.find((result) => result.status === 'rejected');
+    if (failed) throw failed.reason;
+  }
+  return catalog.boards;
+}
+
+async function previousCatalog(path) {
+  let contents;
+  try {
+    contents = await readFile(path, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+  try {
+    const { boards } = JSON.parse(contents.replace(/^\uFEFF/u, ''));
+    if (!Array.isArray(boards) || !boards.every(board =>
+      typeof board?.slug === 'string' && Array.isArray(board.releases))) {
+      throw new Error('缺少有效的板卡或版本列表。');
+    }
+    return boards;
+  } catch (error) {
+    console.warn('[WARN] 已有 boards.json 无法解析，将在所有来源同步成功后重建：' + error.message);
+    return null;
+  }
+}
+
+export async function generateCatalog(output, includePrerelease = false) {
   const firmware = join(output, 'firmware');
+  const path = join(output, 'boards.json');
+  const previous = await previousCatalog(path);
+  const previousBoards = previous ?? [];
   await mkdir(firmware, { recursive: true });
   const temporary = await mkdtemp(join(output, '.catalog-'));
   try {
-    for (let start = 0; start < images.length; start += 3) {
-      const batch = images.slice(start, start + 3).map((image) => {
-        const name = image.filename;
-        return mirrorImage(image, join(firmware, name), join(temporary, name));
-      });
-      const results = await Promise.allSettled(batch);
-      const failed = results.find((result) => result.status === 'rejected');
-      if (failed) throw failed.reason;
+    const [bin, lierda] = await Promise.allSettled([
+      collectBinBoards(firmware, temporary, includePrerelease),
+      collectLierdaBoards(firmware, { includePrerelease, previousBoards }),
+    ]);
+    const isLierda = ({ slug }) => slug === 'lierda-lite' || slug === 'lierda-pro';
+    const binBoards = bin.status === 'fulfilled' ? bin.value : previousBoards.filter(board => !isLierda(board));
+    const lierdaBoards = lierda.status === 'fulfilled' ? lierda.value.boards : previousBoards.filter(isLierda);
+    if (bin.status === 'rejected') console.error('[ERROR] ESP32 / BK7258:', errorDetail(bin.reason));
+    if (lierda.status === 'rejected') console.error('[ERROR] 利尔达:', errorDetail(lierda.reason));
+    const failed = bin.status === 'rejected' || lierda.status === 'rejected' || lierda.value.failed;
+    if (previous === null && failed) {
+      console.error('[ERROR] 部分来源未能同步，已保留原 boards.json。');
+      return { boards: [], failed: true };
     }
-    const path = join(temporary, 'boards.json');
-    await writeFile(path, JSON.stringify(catalog, null, 2) + '\n');
-    await rename(path, join(output, 'boards.json'));
-    console.log(
-      `已生成 ${catalog.boards.length} 块板卡、${catalog.boards.reduce((count, board) => count + board.releases.length, 0)} 个版本，校验了 ${images.length} 个完整 BIN。`,
-    );
-    console.log(join(output, 'boards.json'));
+    const synced = bin.status === 'fulfilled' || (lierda.status === 'fulfilled' && lierda.value.synced);
+    const boards = synced ? [...binBoards, ...lierdaBoards] : previousBoards;
+    if (synced && JSON.stringify(boards) !== JSON.stringify(previousBoards)) {
+      const staged = join(temporary, 'boards.json');
+      await writeFile(staged, JSON.stringify({ boards }, null, 2) + '\n');
+      await rename(staged, path);
+    }
+    console.log(`固件目录共 ${boards.length} 款板卡、${boards.reduce((n, b) => n + b.releases.length, 0)} 个版本。`);
+    return { boards, failed };
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
 }
 
-try {
+async function main() {
   const { values } = parseArgs({
     options: {
       'output-dir': { type: 'string' },
@@ -493,12 +538,17 @@ try {
   } else {
     if (!values['output-dir']?.trim())
       throw new Error('请通过 --output-dir 指定输出目录。');
-    await generate(
+    const { failed } = await generateCatalog(
       resolve(values['output-dir']),
       Boolean(values['include-prerelease']),
     );
+    if (failed) process.exitCode = 1;
   }
-} catch (error) {
-  console.error('[ERROR] ' + error.message);
-  process.exitCode = 1;
+}
+
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  await main().catch((error) => {
+    console.error('[ERROR] ' + error.message);
+    process.exitCode = 1;
+  });
 }

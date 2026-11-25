@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { importLierdaLiteCatalog } from '../scripts/import-lierda-lite.mjs';
+import { collectLierdaBoards } from '../scripts/import-lierda.mjs';
 
 const api = 'https://api.github.com/repos/tangeai/xiaotai-lierda/releases?per_page=100&page=';
 const downloads = 'https://github.com/tangeai/xiaotai-lierda/releases/download/';
@@ -65,6 +66,54 @@ test('Lite import follows pagination and rejects a bad package before replacing 
   assert.equal(await readFile(join(path, 'lite.json'), 'utf8'), 'previous manifest');
 });
 
+test('the shared Pro board ignores a legacy test manifest and non-stable release tags', async (t) => {
+  const path = await directory(t);
+  const oldManifest = JSON.stringify({ version: 'repair3' });
+  await writeFile(join(path, 'pro.json'), oldManifest);
+  const { boards, failed } = await collectLierdaBoards(path, {
+    includePrerelease: true,
+    fetcher: async (url) => {
+      assert.equal(url, api + '1');
+      return Response.json([
+        { tag_name: '0.2.0' }, { tag_name: 'pro-v1.0.0-rc.1' },
+        { tag_name: 'pro-v1.0.0', draft: true }, { tag_name: 'pro-v2.0.0', prerelease: true },
+      ]);
+    },
+  });
+  assert.equal(failed, false);
+  assert.deepEqual(boards.find((board) => board.slug === 'lierda-pro').releases, []);
+  assert.equal(await readFile(join(path, 'pro.json'), 'utf8'), oldManifest);
+  assert.equal(await readFile(join(path, 'lite.json'), 'utf8'), 'previous manifest');
+});
+
+test('a broken stable Pro release keeps the previously published catalog intact', async (t) => {
+  const path = await directory(t);
+  const previous = { slug: 'lierda-pro', releases: [{ version: '1.0.0' }] };
+  // Valid BINPKG magic, four-image header and hash, but missing EC718HM product metadata.
+  const binary = Buffer.alloc(52 + 364);
+  binary.write('111\0\0\0\0\0bpkg');
+  binary.writeUInt32LE(4, 16);
+  binary.write('SHA256', 20);
+  const proTag = 'pro-v1.1.0';
+  const pkg = asset('pro.binpkg', binary, proTag);
+  const checksum = Buffer.from(digest(binary) + '  pro.binpkg\n');
+  const sums = asset('SHA256SUMS.txt', checksum, proTag);
+  const errors = t.mock.method(console, 'error', () => {});
+  const { boards, failed } = await collectLierdaBoards(path, {
+    previousBoards: [previous],
+    fetcher: async (url) => {
+      if (url === api + '1') return Response.json([{ tag_name: proTag, assets: [pkg, sums] }]);
+      if (url === sums.browser_download_url) return new Response(checksum);
+      assert.equal(url, pkg.browser_download_url);
+      return new Response(binary);
+    },
+  });
+  assert.equal(failed, true);
+  assert.match(errors.mock.calls[0].arguments[0], /EC718HM_PRD/);
+  assert.deepEqual(boards.find((board) => board.slug === 'lierda-pro'), previous);
+  assert.deepEqual(await readdir(path), ['lite.json']);
+});
+
 test('a checksum that disagrees with the GitHub asset digest stops before downloading the package', async (t) => {
   const path = await directory(t);
   const binary = Buffer.from('verified artifact placeholder');
@@ -77,4 +126,61 @@ test('a checksum that disagrees with the GitHub asset digest stops before downlo
     return new Response(checksum);
   }), /SHA-256 校验记录不一致/);
   assert.deepEqual(await readdir(path), ['lite.json']);
+});
+
+test('the shared catalog queries the repository once and keeps both empty board selectors', async (t) => {
+  const firmwareDir = await directory(t);
+  const calls = [];
+  const { boards, failed } = await collectLierdaBoards(firmwareDir, {
+    fetcher: async (url) => {
+      calls.push(url);
+      return Response.json([
+        { tag_name: 'lite-v1.0.1', prerelease: true },
+        { tag_name: 'pro-v1.0.2', prerelease: true },
+        { tag_name: 'pro-v2.0.0', draft: true },
+        { tag_name: '0.2.0' },
+      ]);
+    },
+  });
+  assert.equal(failed, false);
+  assert.deepEqual(calls, [api + '1']);
+  assert.deepEqual(boards.map(({ slug, chip, modem, modempkg, flash_bytes, releases }) => (
+    [slug, chip, modem, modempkg, flash_bytes, releases]
+  )), [
+    ['lierda-lite', 'EC718PM', 'NT26F6D0', 'F6D_D', 0x400000, []],
+    ['lierda-pro', 'EC718HM', 'NT26F9D0', 'F9D_D', 0x800000, []],
+  ]);
+  assert.equal(await readFile(join(firmwareDir, 'lite.json'), 'utf8'), 'previous manifest');
+  assert.deepEqual(await readdir(firmwareDir), ['lite.json']);
+});
+
+test('an invalid opt-in Lite release retains only its board while Pro drops old rows on a successful sync', async (t) => {
+  const path = await directory(t);
+  const previousBoards = [
+    { slug: 'lierda-lite', releases: [{ version: '1.0.0' }] },
+    { slug: 'lierda-pro', releases: [{ version: 'old' }] },
+  ];
+  const result = await collectLierdaBoards(path, {
+    previousBoards, includePrerelease: true,
+    fetcher: async () => Response.json([
+      { tag_name: 'lite-v1.0.1', prerelease: true, assets: [] },
+      { tag_name: 'pro-v1.0.1', prerelease: true, assets: [] },
+    ]),
+  });
+  assert.equal(result.failed, true);
+  assert.deepEqual(result.boards[0], previousBoards[0]);
+  assert.deepEqual(result.boards[1].releases, []);
+});
+
+test('a failed release listing retains both boards and reports failure', async (t) => {
+  const path = await directory(t);
+  const previousBoards = [
+    { slug: 'lierda-lite', releases: [{ version: '1.0.0' }] },
+    { slug: 'lierda-pro', releases: [] },
+  ];
+  const result = await collectLierdaBoards(path, {
+    previousBoards, fetcher: async () => new Response(null, { status: 403 }),
+  });
+  assert.equal(result.failed, true);
+  assert.deepEqual(result.boards, previousBoards);
 });

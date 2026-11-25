@@ -1,7 +1,5 @@
 import { useEffect, useState } from 'react';
-import {
-  lierdaBoards, loadLierdaLiteReleases, loadLierdaProRelease, prepareLierdaFirmware,
-} from './lierda-firmware.mjs';
+import { lierdaBoards, prepareLierdaFirmware } from './lierda-firmware.mjs';
 import { parseLierdaPackage } from './lierda-package.mjs';
 
 export function lierdaBoardForLink(slug) {
@@ -13,42 +11,14 @@ export function initialLierdaSelection(board) {
   return {
     model: (board ?? lierdaBoards[0]).model,
     modelChosen: Boolean(board),
-    liteVersion: null,
-    origin: null,
+    versions: {},
+    origin: 'official',
     file: null,
   };
 }
 
 export function matchesLierdaDevice({ model, chip, flashBytes }, device) {
   return device?.lierdaModel === model && device.chip === chip && device.capacity === flashBytes;
-}
-
-function useLierdaManifest(enabled, load) {
-  const [release, setRelease] = useState(undefined);
-
-  useEffect(() => {
-    if (!enabled) return;
-    const abort = new AbortController();
-    load(abort.signal).then(
-      (available) => {
-        if (!abort.signal.aborted) setRelease(available);
-      },
-      () => {
-        if (!abort.signal.aborted) setRelease((previous) => previous ?? null);
-      },
-    );
-    return () => abort.abort();
-  }, [enabled, load]);
-
-  return release;
-}
-
-export function useLierdaReleases(board, enabled) {
-  const lite = board.model === 'lite';
-  const liteReleases = useLierdaManifest(enabled && lite, loadLierdaLiteReleases);
-  const proRelease = useLierdaManifest(enabled && !lite, loadLierdaProRelease);
-  if (lite) return liteReleases?.length ? liteReleases : [board.release];
-  return proRelease ? [proRelease] : proRelease;
 }
 
 export function useLierdaPreflight(selection, enabled) {
@@ -94,7 +64,7 @@ export function LierdaFirmwarePicker({ board, releases, release, selection, setS
               name="lierda-source"
               value={origin}
               checked={selection.origin === origin}
-              disabled={busy || (origin === 'official' && !release)}
+              disabled={busy}
               onChange={() => setSelection((current) => ({ ...current, origin, file: null }))}
             />{' '}
             {label}
@@ -114,37 +84,37 @@ export function LierdaFirmwarePicker({ board, releases, release, selection, setS
           </select>
         </label>
         {selection.origin === 'official' ? (
-          release ? (
-            <>
-              <label className="field span">
-                固件版本
-                <select
-                  id="lierda-version"
-                  disabled={busy}
-                  value={release.version}
-                  onChange={(event) => {
-                    const version = event.target.value;
-                    if (selection.model === 'lite') {
-                      setSelection((current) => ({ ...current, liteVersion: version }));
-                    }
-                  }}
-                >
-                  {releases.map(({ version, recommended }) => (
-                    <option key={version} value={version}>
-                      {version}{recommended ? '（推荐）' : ''}
-                    </option>
-                  ))}
-                </select>
-              </label>
+          <>
+            <label className="field span">
+              固件版本
+              <select
+                id="lierda-version"
+                disabled={busy || !release}
+                value={release?.version ?? ''}
+                onChange={(event) => {
+                  const version = event.target.value;
+                  setSelection((current) => ({
+                    ...current,
+                    versions: { ...current.versions, [board.model]: version },
+                  }));
+                }}
+              >
+                {!release && (
+                  <option value="">{releases === undefined ? '正在读取…' : releases === null ? '固件目录暂不可用' : '暂无正式版本'}</option>
+                )}
+                {releases?.map(({ version, recommended, prerelease }) => (
+                  <option key={version} value={version}>
+                    {board.versionPrefix}{version}{prerelease ? '（测试版）' : ''}{recommended ? '（推荐）' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {release && (
               <p className="callout span" id="manifest">
-                {board.model !== 'lite' && `${board.chip} · `}{release.filename}
+                {release.filename}
               </p>
-            </>
-          ) : (
-            <p className="muted span" id="manifest" role="status">
-              {releases === undefined ? '正在读取小钛固件目录…' : '该板型暂无小钛固件。'}
-            </p>
-          )
+            )}
+          </>
         ) : (
           <label className="field span">
             本地 BINPKG
