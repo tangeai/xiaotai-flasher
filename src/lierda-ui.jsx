@@ -27,18 +27,18 @@ function useLierdaManifest(enabled, load) {
   const [release, setRelease] = useState(undefined);
 
   useEffect(() => {
-    if (!enabled || release !== undefined) return;
+    if (!enabled) return;
     const abort = new AbortController();
     load(abort.signal).then(
       (available) => {
         if (!abort.signal.aborted) setRelease(available);
       },
       () => {
-        if (!abort.signal.aborted) setRelease(null);
+        if (!abort.signal.aborted) setRelease((previous) => previous ?? null);
       },
     );
     return () => abort.abort();
-  }, [enabled, load, release]);
+  }, [enabled, load]);
 
   return release;
 }
@@ -136,7 +136,9 @@ export function LierdaFirmwarePicker({ board, releases, release, selection, setS
                   ))}
                 </select>
               </label>
-              <p className="callout span" id="manifest">{board.chip} · {release.filename}</p>
+              <p className="callout span" id="manifest">
+                {board.model !== 'lite' && `${board.chip} · `}{release.filename}
+              </p>
             </>
           ) : (
             <p className="muted span" id="manifest" role="status">

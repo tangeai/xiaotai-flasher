@@ -154,7 +154,8 @@ export async function importLierdaLiteCatalog(output, fetcher = fetch) {
       }
       catalog.releases.push({
         modem: 'NT26F6D0', modempkg: 'F6D_D',
-        version: version.join('.'), filename, byte_length: bytes.length, sha256,
+        version: version.join('.'), filename, source_filename: pkg.name,
+        byte_length: bytes.length, sha256,
         recommended: catalog.releases.length === 0,
       });
     }

@@ -8,6 +8,7 @@ import {
 test('selects the pinned Lite download and keeps Pro local when its online catalog is absent', () => {
   const [lite, pro] = lierdaBoards;
   const selected = prepareLierdaFirmware({ model: lite.model, origin: 'official' });
+  assert.equal(selected.boardModel, 'NT26F6D0 语音通话版');
   assert.equal(selected.filename, '2026_11_21_16_05_10_lite.binpkg');
   assert.equal(selected.release.version, '1.0.0 · xiaotai-lierda Lite');
   assert.equal(selected.release.byte_length, 3449160);
@@ -97,10 +98,11 @@ test('loads selectable same-origin Lite releases and resolves the chosen older v
   const hash = Buffer.from(await crypto.subtle.digest('SHA-256', bytes)).toString('hex');
   const older = {
     modem: 'NT26F6D0', modempkg: 'F6D_D',
-    version: '0.2.0', filename: 'lite-older.binpkg', byte_length: bytes.length, sha256: hash,
+    version: '0.2.0', filename: `lite-v0.2.0-${hash}.binpkg`, byte_length: bytes.length, sha256: hash,
+    source_filename: '2026_10_20_12_00_00_lite.binpkg',
   };
   const current = {
-    ...older, version: '0.3.0', filename: 'lite-current.binpkg', recommended: true,
+    ...older, version: '0.3.0', filename: 'lite-current.binpkg', source_filename: 'new_lite.binpkg', recommended: true,
     sha256: '1'.repeat(64),
   };
   const urls = [];
@@ -120,9 +122,22 @@ test('loads selectable same-origin Lite releases and resolves the chosen older v
   );
   assert.equal(firmware.release.version, '0.2.0');
   assert.deepEqual(await resolveLierdaFirmware(firmware), {
-    bytes, model: 'lite', stage: 'app', filename: 'lite-older.binpkg', sha256: hash,
+    bytes, model: 'lite', stage: 'app', filename: older.source_filename, sha256: hash,
   });
-  assert.deepEqual(urls, [base + 'lierda/firmware/lite.json', base + 'lierda/firmware/lite-older.binpkg']);
+  assert.deepEqual(urls, [base + 'lierda/firmware/lite.json', base + 'lierda/firmware/' + older.filename]);
+});
+
+test('displays the original 1.0.0 asset name with a pre-upgrade Lite catalog', async (t) => {
+  const pinned = lierdaBoards[0].release;
+  const filename = `lite-v1.0.0-${pinned.sha256}.binpkg`;
+  const base = 'https://host.test/web-flasher/';
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ releases: [{
+    modem: 'NT26F6D0', modempkg: 'F6D_D', version: '1.0.0', filename,
+    byte_length: pinned.byte_length, sha256: pinned.sha256,
+  }] }));
+  const [release] = await loadLierdaLiteReleases(undefined, base);
+  assert.equal(release.filename, pinned.filename);
+  assert.equal(release.bin_url, base + 'lierda/firmware/' + filename);
 });
 
 test('validates Lite manifest identity, file bounds, and unique version labels', async (t) => {
@@ -135,6 +150,7 @@ test('validates Lite manifest identity, file bounds, and unique version labels',
   };
   for (const mismatch of [
     { modem: 'NT26F9D0' }, { modempkg: 'F9D_D' }, { filename: '../sample.binpkg' },
+    { source_filename: '../sample.binpkg' },
     { byte_length: 0x410001 }, { sha256: 'bad hash' },
   ]) {
     mocked.mock.mockImplementation(async () => Response.json({ releases: [{ ...valid, ...mismatch }] }));

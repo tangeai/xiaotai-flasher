@@ -15,7 +15,7 @@ export const lierdaBoards = Object.freeze([
   Object.freeze({
     model: 'lite',
     slug: 'lierda-lite',
-    name: 'Lite 语音版 · NT26F6D0',
+    name: 'NT26F6D0 语音通话版',
     chip: 'EC718PM',
     flashBytes: liteFlashBytes,
     release: liteRelease,
@@ -68,12 +68,21 @@ export async function loadLierdaLiteReleases(signal, baseURL = document.baseURI)
   if (manifest === undefined) return null;
   if (!Array.isArray(manifest?.releases)) throw new Error('Lite 固件目录配置无效。');
 
-  const releases = manifest.releases.map((entry) => ({
-    ...normalizeLierdaRelease(entry, url, {
+  const releases = manifest.releases.map((entry) => {
+    const release = normalizeLierdaRelease(entry, url, {
       label: 'Lite', modem: 'NT26F6D0', modempkg: 'F6D_D', flashBytes: liteFlashBytes,
-    }),
-    recommended: entry.recommended === true,
-  }));
+    });
+    if (entry.source_filename !== undefined) {
+      if (typeof entry.source_filename !== 'string' || !onlinePackageName.test(entry.source_filename)) {
+        throw new Error('Lite 固件目录配置无效。');
+      }
+      release.filename = entry.source_filename;
+    } else if (release.sha256 === liteRelease.sha256 && release.byte_length === liteRelease.byte_length) {
+      // The first catalog stored only the SHA-qualified download name.
+      release.filename = liteRelease.filename;
+    }
+    return { ...release, recommended: entry.recommended === true };
+  });
   if (new Set(releases.map(({ version }) => version)).size !== releases.length) {
     throw new Error('Lite 固件目录包含重复版本。');
   }

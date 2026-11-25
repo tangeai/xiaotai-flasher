@@ -670,8 +670,8 @@ function LogConsole({ workbench, rate, setRate, platform }) {
         </div>
         {complete && (
           <p id="monitor-setup" className="callout">
-            完整镜像已写入。请重新配置设备 Wi‑Fi，再到
-            <a href="https://xiaotai.chat/devices">设备管理</a>绑定。
+            完整镜像已写入。{platform === 'lierda' ? '设备通过蜂窝网络上线后，请到' : '请重新配置设备 Wi‑Fi，再到'}
+            <a href="https://xiaotai.chat/devices">设备管理</a>{platform === 'lierda' ? '检查绑定状态。' : '绑定。'}
           </p>
         )}
       </div>
@@ -1317,9 +1317,11 @@ export function App() {
               )}
               {completed && (
                 <div className="actions">
-                  {complete && (!lierda || lierdaSelection.model === 'lite') && (
+                  {complete && (
                     <p className="callout">
-                      完整镜像已写入。请重新配网和绑定设备。
+                      {lierda
+                        ? '完整镜像已写入。请确认设备已通过蜂窝网络上线，并检查绑定状态。'
+                        : '完整镜像已写入。请重新配网和绑定设备。'}
                     </p>
                   )}
                   <div className="row actions">

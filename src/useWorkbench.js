@@ -496,7 +496,7 @@ export function useWorkbench() {
         throw failure;
       }
       progress('烧录完成，校验通过', 100, 'success');
-      update({ complete: true });
+      update({ complete: firmware.model === 'lite' });
       try {
         active.resetting = true;
         await session.reset();

@@ -214,7 +214,7 @@ sudo /opt/xiaotai-flasher/deploy-prod.sh update
 
 切换板型时保留「小钛固件」或「本地 BINPKG」，重新选择该板型的本地文件。连接后依据底包指纹和应用布局识别芯片及支持的 Flash 配置。设备与所选板型一致、固件校验通过后才能烧录。擦除前再次核对当前设备的完整底包和应用布局。
 
-- Lite 语音版 NT26F6D0 使用 F6D_D。支持已导入的小钛正式版固件或匹配的本地完整 BINPKG。写前备份 4 MiB 内部 Flash，写入后回读校验。
+- NT26F6D0 语音通话版（Lite）使用 F6D_D。支持已导入的小钛正式版固件或匹配的本地完整 BINPKG。写前备份 4 MiB 内部 Flash，写入后回读校验。
 - Pro 视频通话版 NT26F9D0 使用 F9D_D。可选「小钛固件」中的测试版或导入与现有底包匹配的本地完整 BINPKG。备份 8 MiB 后只更新 APP，回读校验应用并核对其余内部 Flash。
 
 ### 更新 Lite 在线版本
@@ -224,7 +224,7 @@ sudo /opt/xiaotai-flasher/deploy-prod.sh update
 首次在生产站点启用利尔达时，按以下顺序操作。
 
 1. 先在生产源码中快进拉取此次更新，安装 AgentBoot 的 Git 忽略规则。默认路径下运行 `sudo git -C /opt/xiaotai-flasher/xiaotai-flasher pull --ff-only`。
-2. 将对应版本的 USB AgentBoot 原件放到生产源码目录的 `public/lierda/agentboot-ec718pm-usb.bin`。默认完整路径是 `/opt/xiaotai-flasher/xiaotai-flasher/public/lierda/agentboot-ec718pm-usb.bin`。核对下文的大小和 SHA-256 后，运行 `sudo /opt/xiaotai-flasher/deploy-prod.sh update`。
+2. 将对应版本的 USB AgentBoot 原件放到生产源码目录的 `public/lierda/agentboot-ec718pm-usb.bin`。默认完整路径是 `/opt/xiaotai-flasher/xiaotai-flasher/public/lierda/agentboot-ec718pm-usb.bin`。核对下文的大小和 SHA-256 后，运行 `sudo env FORCE_UPDATE=1 /opt/xiaotai-flasher/deploy-prod.sh update`，确保已发布相同源码提交的站点也会把 AgentBoot 纳入本次构建。
 3. 将仓库 Nginx 配置中的 Lite 路由合入站点 HTTPS 配置。运行 `sudo nginx -t`，通过后运行 `sudo systemctl reload nginx`。
 4. 导入 Lite 正式版。此后发布新版本时可单独重跑导入命令。
 
@@ -232,7 +232,7 @@ sudo /opt/xiaotai-flasher/deploy-prod.sh update
 sudo /opt/xiaotai-flasher/deploy-prod.sh catalog-lite
 ```
 
-导入命令校验附件 SHA-256、NT26F6D0 F6D_D 的底包及应用布局。校验完成后发布带摘要的包名，再切换 `/web-flasher/lierda/firmware/lite.json`。目录与固件保存在部署根目录的 `lierda-lite-firmware/`。版本列表按版本号降序排列，推荐最新正式版。目录暂不可用时，页面使用内置的小钛 Lite 固件。
+导入命令校验附件 SHA-256、NT26F6D0 F6D_D 的底包及应用布局。服务器以带摘要的文件名保存固件，随后更新 `/web-flasher/lierda/firmware/lite.json`。页面显示 GitHub Release 的附件原名。目录与固件保存在部署根目录的 `lierda-lite-firmware/`。版本列表按版本号降序排列，推荐最新正式版。首次读取目录失败时，页面提供内置的 Lite 固件。重新选择该板型会再读取目录。
 
 ### 更新 Pro 在线版本
 
