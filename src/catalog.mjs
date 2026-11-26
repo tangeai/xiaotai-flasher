@@ -127,10 +127,11 @@ function publishedLierdaBoard(board, hardware, catalogURL) {
         typeof filename !== 'string' || !packageName.test(filename) ||
         !Number.isSafeInteger(bytes) || bytes <= 0 || bytes > lierdaPackageSizeLimit(hardware) ||
         (release.recommended !== undefined && typeof release.recommended !== 'boolean')) return null;
-    const path = `./firmware/${hardware.firmwareKey}-v${version}-${sha256.toLowerCase()}.binpkg`;
-    if (release.bin_url !== path) return null;
+    const releaseFilename = lierdaReleaseFilename(hardware, version);
+    const digestPath = `./firmware/${hardware.firmwareKey}-v${version}-${sha256.toLowerCase()}.binpkg`;
+    if (release.bin_url !== digestPath && release.bin_url !== './firmware/' + releaseFilename) return null;
     seen.add(version);
-    versions.push({ ...release, filename: lierdaReleaseFilename(hardware, version), bin_url: linkedURL(path, catalogURL).href });
+    versions.push({ ...release, filename: releaseFilename, bin_url: linkedURL(release.bin_url, catalogURL).href });
   }
   if (versions.filter((release) => release.recommended).length > 1) return null;
   return { slug: hardware.slug, model: board.model.trim(), chip: hardware.chip, flashBytes: hardware.flashBytes, versions };

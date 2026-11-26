@@ -71,6 +71,8 @@ for (const hardware of lierdaBoards) {
     const hash = Buffer.from(await crypto.subtle.digest('SHA-256', bytes)).toString('hex');
     const product = hardware.firmwareKey;
     const older = packageRelease(product, hash);
+    older.source_filename = `v${older.version}-${hardware.slug}.binpkg`;
+    older.bin_url = './firmware/' + older.source_filename;
     const latest = { ...packageRelease(product, '1'.repeat(64), '1.0.1'), recommended: true };
     const calls = [];
     t.mock.method(globalThis, 'fetch', async (url) => {
@@ -124,6 +126,8 @@ test('malformed or conflicting BINPKG records leave other platforms available', 
   }
   for (const mismatch of [
     { bin_url: '../bad.binpkg' }, { bin_url: packageRelease('lite').bin_url }, { source_filename: '../bad.binpkg' },
+    { bin_url: './firmware/v1.0.0-lierda-ec718pm-lite.binpkg' },
+    { bin_url: './firmware/v2.0.0-lierda-ec718hm-pro.binpkg' },
     { version: 'Pro 测试版' }, { byte_length: 0x810001 }, { sha256: 'bad' }, { recommended: 'yes' },
   ]) {
     assert.deepEqual(listed([entry(pro, [{ ...valid, ...mismatch }])]), expected);

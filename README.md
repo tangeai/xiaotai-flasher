@@ -83,7 +83,7 @@ ESP32 完整 BIN 写入前会检查启动镜像、分区表及对应芯片的应
 
 如果旧部署没有固件目录，先运行 `sudo mkdir -p /opt/xiaotai-flasher/board-catalog/firmware`。
 
-1. 用 `sha256sum` 计算摘要，将固件放入服务器的 `/opt/xiaotai-flasher/board-catalog/firmware/`。ESP32 使用从 `0x0` 写入的完整 BIN，BK7258 使用原始 `all-app.bin`，均保留附件原名。利尔达使用完整 BINPKG，存储名为 `<板型键>-v<版本号>-<SHA-256>.binpkg`，PM Lite、PM Pro、HM Pro 分别使用 `lite`、`pro-pm`、`pro`。
+1. 用 `sha256sum` 计算摘要，将固件放入服务器的 `/opt/xiaotai-flasher/board-catalog/firmware/`。ESP32 使用从 `0x0` 写入的完整 BIN，BK7258 使用原始 `all-app.bin`，均保留附件原名。利尔达使用完整 BINPKG，可保留发布附件名 `v<版本号>-<板型标识>.binpkg`，也可使用带摘要的存储名 `<板型键>-v<版本号>-<SHA-256>.binpkg`，PM Lite、PM Pro、HM Pro 分别使用 `lite`、`pro-pm`、`pro`。
 2. 参照 [`boards.json`](boards.json) 在对应板型下添加版本。`bin_url` 填 `./firmware/<存储文件名>`，`sha256` 填实际摘要。利尔达另填 `source_filename`（附件原名）和 `byte_length`。每块板只标记一个推荐版本。运行 `npm test` 检查格式和下载路径。
 3. 确认固件可下载后，将更新后的 `boards.json` 上传到 `/opt/xiaotai-flasher/board-catalog/boards.json`，刷新页面确认新版本。前端无需重新构建。由人工维护目录时，避免运行会重新生成目录的 `catalog` 命令。
 
