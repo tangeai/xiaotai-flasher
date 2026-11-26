@@ -10,7 +10,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test"
+    "test": "node --test",
+    "test:browser": "node --test e2e/firmware-selection.mjs"
   },
   "dependencies": {
     "react": "19.3.1",
@@ -19,6 +20,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "5.2.0",
+    "playwright": "1.62.1",
     "vite": "7.3.7"
   }
 }

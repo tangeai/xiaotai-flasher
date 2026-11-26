@@ -1,6 +1,7 @@
 import { getLanguage, releaseLabel, setLanguage, t } from './i18n.mjs';
 import { previewOffset, timestampedPreview } from './serial-preview.mjs';
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { FirmwareFileInput } from './FirmwareFileInput.jsx';
 import { SplitWorkbench } from './SplitWorkbench.jsx';
 import brandMark from './assets/xiaotai-brand-mark.png';
 import { canonicalBoardSlug, loadBoardCatalog } from './catalog.mjs';
@@ -239,12 +240,12 @@ function FirmwarePicker({
       <div hidden={origin !== 'local'}>
         <label className="field" hidden={!bk && selection.segmented}>
           {t('完整镜像 · 起始地址')} <code>0x0</code>
-          <input
-            type="file"
+          <FirmwareFileInput
+            file={selection.merged}
             id="merged-bin"
             accept=".bin"
             disabled={busy}
-            onChange={(event) => change({ merged: event.target.files[0] })}
+            onFileChange={file => change({ merged: file })}
           />
           <small>
             {bk

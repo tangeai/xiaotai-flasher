@@ -1,3 +1,4 @@
+import { FirmwareFileInput } from './FirmwareFileInput.jsx';
 import { LocalizedError, localizedMessage, t } from './i18n.mjs';
 import { useEffect, useState } from 'react';
 import { resolveLierdaFirmware } from './lierda-firmware.mjs';
@@ -97,13 +98,12 @@ export function LierdaFirmwarePicker({ board, boardPicker, releases, release, se
         )}
         <label className="field span" hidden={selection.origin !== 'local'}>
           {t('本地 BINPKG')}
-          <input
-            type="file"
+          <FirmwareFileInput
+            file={selection.file}
             id="lierda-binpkg"
             accept=".binpkg"
             disabled={busy}
-            onChange={(event) => {
-              const file = event.target.files[0] ?? null;
+            onFileChange={file => {
               setSelection((current) => ({ ...current, origin: 'local', file }));
             }}
           />

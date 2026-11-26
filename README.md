@@ -254,4 +254,4 @@ npm run dev      # http://localhost:5173/
 ```
 
 执行 `npm run build` 生成 `dist/`，再用 `npm run preview` 检查构建结果。
-执行 `npm test` 可验证固件目录、镜像校验、ESP32 Flash 参数，以及 BK7258 的模拟串口流程。
+执行 `npm test` 可验证固件目录、镜像校验、ESP32 Flash 参数，以及 BK7258 的模拟串口流程。首次运行浏览器测试前执行 `npx playwright install chromium`，再用 `npm run test:browser` 验证切换平台和板型时的文件选择状态。
