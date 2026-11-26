@@ -1,6 +1,5 @@
 import { LocalizedError, localizedMessage, t } from './i18n.mjs';
 import { useEffect, useState } from 'react';
-import { lierdaBoardForLink } from './lierda-boards.mjs';
 import { lierdaBoards, resolveLierdaFirmware } from './lierda-firmware.mjs';
 import { parseLierdaPackage } from './lierda-package.mjs';
 
@@ -47,7 +46,7 @@ export function useLierdaPreflight(selection, enabled, selectedRelease) {
   return result;
 }
 
-export function LierdaFirmwarePicker({ board, boardName, releases, release, selection, setSelection, onModelChange, busy }) {
+export function LierdaFirmwarePicker({ board, boardPicker, releases, release, selection, setSelection, busy }) {
   return (
     <>
       <h2 id="firmware-title">{t('选择固件')}</h2>
@@ -71,18 +70,7 @@ export function LierdaFirmwarePicker({ board, boardName, releases, release, sele
         ))}
       </div>
       <div className="options">
-        <label className="field span">
-          {t('开发板型号')}
-          <select
-            id="lierda-board"
-            value={board.slug}
-            disabled={busy}
-            onChange={(event) => onModelChange(lierdaBoardForLink(event.target.value).model)}
-          >
-            {lierdaBoards.map(({ slug }) => <option key={slug} value={slug}>{slug}</option>)}
-          </select>
-          <small>{t('开发板名称 · @0', t(boardName))}</small>
-        </label>
+        {boardPicker}
         {selection.origin === 'official' && (
           <>
             <label className="field span">
@@ -126,7 +114,7 @@ export function LierdaFirmwarePicker({ board, boardName, releases, release, sele
             disabled={busy || Boolean(board.flashUnavailable)}
             onChange={(event) => {
               const file = event.target.files[0] ?? null;
-              setSelection((current) => ({ ...current, origin: 'local', file }));
+              setSelection((current) => ({ ...current, model: board.model, origin: 'local', file }));
             }}
           />
         </label>

@@ -105,8 +105,12 @@ node scripts/generate-boards.mjs --output-dir ./releases/board-catalog
 
 ```json
 {
+  "platforms": [
+    { "platform": "esp32", "platform_name": "乐鑫 Espressif（ESP32 系列）" }
+  ],
   "boards": [
     {
+      "platform": "esp32",
       "slug": "lckfb-esp32s3",
       "model": "立创·实战派 ESP32-S3",
       "chip": "ESP32-S3",
@@ -124,6 +128,8 @@ node scripts/generate-boards.mjs --output-dir ./releases/board-catalog
 }
 ```
 
+- `platform` 是平台 ID，使用小写字母、数字和连字符；`platform_name` 是顶部下拉框的显示名称。平台名称只在顶层 `platforms` 中定义一次。开发板通过 `boards[].platform` 引用该 ID。顶部下拉框按 `platforms` 数组顺序显示。
+- 选中平台后，开发板列表显示各板的 `slug` 和 `model`，版本列表读取所选板的 `releases`。没有正式版本的板可保留空数组。旧目录省略平台字段时沿用已有硬件分组，空目录仍可使用本地烧录。
 - `slug` 为唯一板卡标识。后台可通过 `/web-flasher?board=lckfb-esp32s3` 预选该板。
 - 可用 `flash_bytes` 声明要求的 Flash 容量。声明后，设备检测到的容量必须一致。
 - 每块板的 `version` 唯一。`status` 支持 `draft`、`published`、`offline`，页面仅显示 `published`。每块板最多有一个推荐版本。

@@ -1,6 +1,6 @@
 import { LocalizedError, t, localizedMessage } from './i18n.mjs';
-import { chips } from './chips.mjs';
-import { lierdaBoardForLink, lierdaBoards, lierdaPackageSizeLimit, lierdaReleaseFilename } from './lierda-boards.mjs';
+import { catalogPlatforms, flashProtocol, localPlatforms, platformDefinitions } from './catalog-platforms.mjs';
+import { lierdaBoardForLink, lierdaPackageSizeLimit, lierdaReleaseFilename } from './lierda-boards.mjs';
 
 const versionDigest = /^[a-f0-9]{64}$/i;
 const boardSlug = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -31,19 +31,41 @@ function linkedURL(raw, base) {
   return url;
 }
 
+export function publishedCatalog(data, catalogURL) {
+  const definitions = data?.platforms === undefined ? null : platformDefinitions(data.platforms);
+  const boards = parseBoards(data, catalogURL, definitions);
+  return { boards, platforms: definitions ?? catalogPlatforms(boards) };
+}
+
 export function publishedBoards(data, catalogURL) {
+  return publishedCatalog(data, catalogURL).boards;
+}
+
+function parseBoards(data, catalogURL, definitions) {
   if (!Array.isArray(data?.boards))
     throw new LocalizedError('固件配置必须包含 boards 数组。');
   const slugs = new Set();
+  const names = new Map();
   return data.boards.flatMap((board) => {
     const hardware = lierdaBoardForLink(board?.slug);
+    const chip = typeof board?.chip === 'string' ? board.chip.trim().toUpperCase() : '';
+    const legacy = !definitions && board?.platform === undefined && board?.platform_name === undefined;
+    const platform = legacy ? flashProtocol({ slug: board?.slug, chip }) : board?.platform;
+    if (legacy && !platform) return [];
+    const name = definitions ? definitions.get(platform)
+      : legacy ? localPlatforms.get(platform) : board?.platform_name;
+    if (typeof platform !== 'string' || !boardSlug.test(platform) ||
+        typeof name !== 'string' || !name.trim() || (names.has(platform) && names.get(platform) !== name.trim())) {
+      throw new LocalizedError('平台标识或名称无效。');
+    }
+    names.set(platform, name.trim());
+    const group = { platform, platform_name: name.trim() };
     if (hardware) {
       // An invalid BINPKG entry must never hide another platform's catalog.
       if (data.boards.filter(candidate => lierdaBoardForLink(candidate?.slug) === hardware).length !== 1) return [];
       const entry = publishedLierdaBoard(board, hardware, catalogURL);
-      return entry ? [entry] : [];
+      return entry ? [{ ...entry, ...group }] : [];
     }
-    if (lierdaBoards.some(({ chip }) => chip === board?.chip)) return [];
     if (
       typeof board?.slug !== 'string' ||
       !boardSlug.test(board.slug) ||
@@ -56,8 +78,6 @@ export function publishedBoards(data, catalogURL) {
       throw new LocalizedError('板卡标识、型号、芯片或版本列表有误。');
     }
     slugs.add(board.slug);
-    const chip = board.chip.trim().toUpperCase();
-    if (chip !== 'BK7258' && !chips.includes(chip)) return [];
     const flashBytes = board.flash_bytes;
     if (
       flashBytes !== undefined &&
@@ -97,9 +117,10 @@ export function publishedBoards(data, catalogURL) {
     if (versions.filter((release) => release.recommended).length > 1) {
       throw new LocalizedError(localizedMessage('@0 只能有一个推荐版本。', board.model));
     }
-    if (!versions.length) return [];
+    if (legacy && !versions.length) return [];
     return [
       {
+        ...group,
         slug: board.slug,
         model: board.model.trim(),
         chip,
@@ -137,9 +158,14 @@ function publishedLierdaBoard(board, hardware, catalogURL) {
   return { slug: hardware.slug, model: board.model.trim(), chip: hardware.chip, flashBytes: hardware.flashBytes, versions };
 }
 
-async function readJSON(url, signal) {
-  const response = await fetch(url, {
-    cache: 'no-cache',
+async function readJSON(url, signal, siteOrigin) {
+  const requestURL = new URL(url);
+  // Keep signed catalog URLs intact. Give ordinary same-site JSON a fresh cache key.
+  if (requestURL.origin === siteOrigin && !requestURL.search) {
+    requestURL.searchParams.set('_refresh', crypto.getRandomValues(new Uint32Array(2)).join('-'));
+  }
+  const response = await fetch(requestURL, {
+    cache: 'no-store',
     credentials: 'omit',
     signal: signal
       ? AbortSignal.any([signal, AbortSignal.timeout(5000)])
@@ -149,11 +175,16 @@ async function readJSON(url, signal) {
   return { data: await response.json(), url: response.url || url.href };
 }
 
-export async function loadBoards(configURL, signal) {
-  const config = await readJSON(configURL, signal);
+export async function loadBoardCatalog(configURL, signal) {
+  const siteOrigin = new URL(configURL).origin;
+  const config = await readJSON(configURL, signal, siteOrigin);
   const catalogURL = linkedURL(config.data?.boards_url, config.url);
-  const catalog = await readJSON(catalogURL, signal);
-  return publishedBoards(catalog.data, catalog.url);
+  const catalog = await readJSON(catalogURL, signal, siteOrigin);
+  return publishedCatalog(catalog.data, catalog.url);
+}
+
+export async function loadBoards(configURL, signal) {
+  return (await loadBoardCatalog(configURL, signal)).boards;
 }
 
 export async function downloadFirmware(release, capacity, signal) {

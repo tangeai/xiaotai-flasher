@@ -1,4 +1,6 @@
 {
+  "平台标识或名称无效。": "Invalid platform ID or name.",
+  "此板型可浏览版本，暂不支持网页烧录。": "Firmware versions are available for browsing. Web flashing is unavailable for this board.",
   "高级设置": "Advanced settings",
   "板端下载接口为 DL_UART0。日志波特率可在串口日志面板单独设置。": "DL_UART0 is the download interface on the board. Set the console baud rate separately in the serial console.",
   "压缩串口传输的数据，写入 Flash 的内容保持原样。": "Compress data during transfer. The image written to flash stays the same.",

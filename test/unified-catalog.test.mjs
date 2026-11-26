@@ -62,6 +62,23 @@ test('one catalog publishes all board families, preserving the old BIN paths and
   assert.match(withTesting.releases.find((release) => !release.recommended).version, /测试版/);
 });
 
+test('sync migrates a custom platform name once and shares it with newly discovered boards', async t => {
+  const { output, readCatalog } = await fixture(t);
+  const lite = curatedCatalog.boards.find(board => board.slug === lierdaSlugs[0]);
+  await writeFile(join(output, 'boards.json'), JSON.stringify({
+    boards: [{ ...lite, platform_name: '移芯语音板' }],
+  }));
+  for (let run = 0; run < 2; run++) {
+    assert.equal((await generateCatalog(output)).failed, false);
+    const { platforms, boards } = await readCatalog();
+    assert.deepEqual(platforms.filter(row => row.platform === 'lierda'), [
+      { platform: 'lierda', platform_name: '移芯语音板' },
+    ]);
+    assert.equal(boards.filter(board => board.platform === 'lierda').length, 3);
+    assert.ok(boards.every(board => !Object.hasOwn(board, 'platform_name')));
+  }
+});
+
 test('a failed source retains its last good rows while a successful source updates its rows', async (t) => {
   const { output, routes, readCatalog } = await fixture(t);
   await generateCatalog(output);
@@ -172,6 +189,6 @@ test('a UTF-8 BOM in an existing catalog preserves its boards during a partial s
   routes.set(releaseList('xiaotai'), () => new Response(null, { status: 403 }));
   assert.equal((await generateCatalog(output)).failed, true);
   const { boards } = await readCatalog();
-  assert.deepEqual(boards[0], previous);
+  assert.deepEqual(boards[0], { ...previous, platform: 'bk7258' });
   assert.deepEqual(boards.slice(1).map(board => board.slug), lierdaSlugs);
 });

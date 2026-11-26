@@ -237,7 +237,9 @@ export async function collectLierdaBoards(firmwareDir, { includePrerelease = fal
   const boards = [];
   for (const board of lierdaBoards) {
     const { slug, chip, name, flashBytes, modem, modempkg } = board;
-    const entry = { slug, model: name, chip, flash_bytes: flashBytes, modem, modempkg, releases: [] };
+    const previous = previousBoards.find(item => lierdaBoardForLink(item.slug) === board);
+    const platform = previous?.platform ?? 'lierda';
+    const entry = { platform, slug, model: name, chip, flash_bytes: flashBytes, modem, modempkg, releases: [] };
     if (releases) {
       try {
         const catalog = await importProductReleases(board, releasesForBoard(board, releases), firmwareDir, fetcher);
@@ -254,8 +256,6 @@ export async function collectLierdaBoards(firmwareDir, { includePrerelease = fal
         console.error('[ERROR] 无法同步 ' + name + '：' + error.message);
       }
     }
-    const previous = previousBoards.find(item => item.slug === slug)
-      ?? previousBoards.find(item => lierdaBoardForLink(item.slug) === board);
     if (previous) boards.push({ ...entry, releases: previous.releases });
   }
   return { boards, failed, synced };

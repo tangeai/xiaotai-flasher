@@ -75,8 +75,14 @@ for (const hardware of lierdaBoards) {
     older.bin_url = './firmware/' + older.source_filename;
     const latest = { ...packageRelease(product, '1'.repeat(64), '1.0.1'), recommended: true };
     const calls = [];
-    t.mock.method(globalThis, 'fetch', async (url) => {
-      calls.push(String(url));
+    t.mock.method(globalThis, 'fetch', async (url, options) => {
+      const requested = new URL(url);
+      if (calls.length < 2) {
+        assert.equal(options.cache, 'no-store');
+        assert.ok(requested.searchParams.get('_refresh'));
+        requested.searchParams.delete('_refresh');
+      }
+      calls.push(requested.href);
       if (calls.length === 1) return Response.json({ boards_url: './board-catalog/boards.json' });
       if (calls.length === 2) return Response.json({ boards: [entry(hardware, [latest, older])] });
       return new Response(bytes);

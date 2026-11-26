@@ -1,6 +1,21 @@
 {
+  "platforms": [
+    {
+      "platform": "esp32",
+      "platform_name": "乐鑫 Espressif（ESP32 系列）"
+    },
+    {
+      "platform": "bk7258",
+      "platform_name": "博通集成 Beken（BK7258）"
+    },
+    {
+      "platform": "lierda",
+      "platform_name": "利尔达（EC718PM/HM系列）"
+    }
+  ],
   "boards": [
     {
+      "platform": "esp32",
       "slug": "lckfb-esp32s3",
       "model": "立创实战派开发板 · ESP32-S3",
       "chip": "ESP32-S3",
@@ -13,20 +28,15 @@
           "recommended": true
         },
         {
-          "version": "v1.5.0 · xiaotai-esp32（测试版）",
-          "bin_url": "./firmware/xiaotai-esp32-s3-app-v1.5.0-full-16MB.bin",
-          "sha256": "23c9923b8a335e0140fc6de73c0f52a94e1405c92e40198f45b10cb7c7697fb3",
-          "status": "published"
-        },
-        {
-          "version": "v1.2.0-beta.1 · xiaotai（测试版）",
-          "bin_url": "./firmware/v1.2.0-beta.1_lckfb-esp32s3_merged.bin",
-          "sha256": "d786dab91cd134d7ef7ae6ccb2e98b36a66a1895b9aefc50d2a381110c280bd9",
+          "version": "v1.2.0 · xiaotai（特别版）",
+          "bin_url": "./firmware/v1.2.0_lckfb-esp32s3_merged.bin",
+          "sha256": "5dbf7e5536fe6993aeea13acf31becf9b79c6c9b4b2eb480279512fb99c307f2",
           "status": "published"
         }
       ]
     },
     {
+      "platform": "esp32",
       "slug": "m5stack-cores3-lite",
       "model": "M5Stack开发板 · ESP32-S3(CoreS3-Lite)",
       "chip": "ESP32-S3",
@@ -39,34 +49,30 @@
           "recommended": true
         },
         {
-          "version": "v1.5.1 · xiaotai-esp32（测试版）",
-          "bin_url": "./firmware/xiaotai-m5stack-cores3-lite-app-v1.5.1-full-16MB.bin",
-          "sha256": "b978119b4bfe25f05da569fa72937f2f6aab03531e877fb7ca0cb824a2727a2f",
-          "status": "published"
-        },
-        {
-          "version": "v1.2.0-beta.1 · xiaotai（测试版）",
-          "bin_url": "./firmware/v1.2.0-beta.1_m5stack-cores3-lite_ili9342c_merged.bin",
-          "sha256": "702e1166bab0f7a5ab85a6af144d9b158a87c859278b40fcb13df7c00c556c95",
+          "version": "v1.2.0 · xiaotai（特别版）",
+          "bin_url": "./firmware/v1.2.0_m5stack-cores3-lite_ili9342c_merged.bin",
+          "sha256": "83c6319ce6f6d3b56d0548e279b8f02b2bf266051c355861fa474e2d3011776a",
           "status": "published"
         }
       ]
     },
     {
+      "platform": "esp32",
       "slug": "waveshare-esp32p4-touch-lcd-43c-v10",
       "model": "微雪开发板 · ESP32-P4（4.3寸屏）",
       "chip": "ESP32-P4",
       "releases": [
         {
-          "version": "v1.2.0-beta.1 · xiaotai（测试版）",
-          "bin_url": "./firmware/v1.2.0-beta.1_waveshare-esp32p4-touch-lcd-43c-v10_merged.bin",
-          "sha256": "7447e5b875e254187fe0bf067a1e4b4a735781fd6121c77110875320fb713220",
+          "version": "v1.2.0 · xiaotai",
+          "bin_url": "./firmware/v1.2.0_waveshare-esp32p4-touch-lcd-43c-v10_merged.bin",
+          "sha256": "bc3780bbc1a4f5b254bd3a8213f04840d6979de2d659cba8a06a40b1b5108d13",
           "status": "published",
           "recommended": true
         }
       ]
     },
     {
+      "platform": "esp32",
       "slug": "waveshare-p4-rev3",
       "model": "微雪开发板 · ESP32-P4（3.5寸屏）",
       "chip": "ESP32-P4",
@@ -77,16 +83,11 @@
           "sha256": "cde9353befeb59a37cbd45105e5d4cbe011f8748841bd8bebb7b92544395e3c3",
           "status": "published",
           "recommended": true
-        },
-        {
-          "version": "v1.6.1 · xiaotai-esp32（测试版）",
-          "bin_url": "./firmware/xiaotai-esp32-p4-app-v1.6.1-full-16MB.bin",
-          "sha256": "fe432a8a4dec67866d4e52b4d8f68fe42a88ae943b5a6c7ca48e6a74a6c099e4",
-          "status": "published"
         }
       ]
     },
     {
+      "platform": "esp32",
       "slug": "wt99p461-s1-1v1",
       "model": "启明开发板 · ESP32-P4",
       "chip": "ESP32-P4",
@@ -101,6 +102,7 @@
       ]
     },
     {
+      "platform": "esp32",
       "slug": "xmini-c3-v3",
       "model": "Xmini-C3-V3 · ESP32-C3",
       "chip": "ESP32-C3",
@@ -115,6 +117,7 @@
       ]
     },
     {
+      "platform": "esp32",
       "slug": "mz28-ai-ppd-v12",
       "model": "MZ28-AI-PPD V1.2",
       "chip": "ESP32-C3",
@@ -129,66 +132,63 @@
       ]
     },
     {
+      "platform": "bk7258",
       "slug": "lckfb-bk7258",
       "model": "立创实战派开发板 · BK7258",
       "chip": "BK7258",
       "releases": [
         {
-          "version": "v1.2.0-beta.1 · xiaotai（测试版）",
-          "bin_url": "./firmware/v1.2.0-beta.1_lckfb-bk7258_all-app.bin",
-          "sha256": "b98be7b726f8cd51bb5430366b49a4d4e80103f2bbc2248596f5f0c181980592",
+          "version": "v1.2.0 · xiaotai",
+          "bin_url": "./firmware/v1.2.0_lckfb-bk7258_all-app.bin",
+          "sha256": "40dc1738625105dd22ef0b89d41a7872991609d9301a91226126f44483832822",
           "status": "published",
-          "embedded_version": "1.0.2+build.99"
-        },
-        {
-          "version": "v1.1.0 · xiaotai",
-          "bin_url": "./firmware/v1.1.0_lckfb-bk7258_all-app.bin",
-          "sha256": "f542472fdf2c7ad5352a2687168756830678923171c84be2c7a829861c599796",
-          "status": "published",
-          "recommended": true,
-          "embedded_version": "1.0.2+build.86"
-        },
-        {
-          "version": "v1.0.0 · xiaotai",
-          "bin_url": "./firmware/v1.0.0_lckfb-bk7258_all-app.bin",
-          "sha256": "24a8ecc0a906efbeebb445197a04838c64de548e3264f846016144a14e87553d",
-          "status": "published"
+          "embedded_version": "1.2.0+build.112",
+          "recommended": true
         }
       ],
       "flash_bytes": 8388608
     },
     {
+      "platform": "bk7258",
       "slug": "mgkfb-bk7258",
       "model": "觅感 AI 玩具开发板 · BK7258（双屏眼睛）",
       "chip": "BK7258",
       "releases": [
         {
-          "version": "v1.2.0-beta.1 · xiaotai（测试版）",
-          "bin_url": "./firmware/v1.2.0-beta.1_mgkfb-bk7258_all-app.bin",
-          "sha256": "473d1ead810356bd1102dbcf65762296cfd6f2377ecd13854b543ddf9d2ba5fd",
+          "version": "v1.2.0 · xiaotai",
+          "bin_url": "./firmware/v1.2.0_mgkfb-bk7258_all-app.bin",
+          "sha256": "9c556d33c1a2e475b9a5ee28c0022ee22ca2b012f8dfa2a048a3a5ed5badeb0e",
           "status": "published",
-          "embedded_version": "1.0.3+build.49"
-        },
-        {
-          "version": "v1.1.0 · xiaotai",
-          "bin_url": "./firmware/v1.1.0_mgkfb-bk7258_all-app.bin",
-          "sha256": "a2d33eb5e302d5927cfb20800765e90a0ad4460143cbfb2ef1a825db3ad83278",
-          "status": "published",
-          "recommended": true,
-          "embedded_version": "1.0.3+build.39"
-        },
-        {
-          "version": "v1.0.0 · xiaotai",
-          "bin_url": "./firmware/v1.0.0_mgkfb-bk7258_all-app.bin",
-          "sha256": "2c7fb16c3715ce7a9eb44cbd8222e817096f286d9c4c5bc778502d5e23167428",
-          "status": "published"
+          "embedded_version": "1.2.0+build.60",
+          "recommended": true
         }
       ],
       "flash_bytes": 8388608
     },
     {
+      "platform": "lierda",
       "slug": "lierda-ec718pm-lite",
-      "model": "NT26F6D0-Lite-EC718PM语音板",
+      "model": "EC718PM-Lite语音板",
+      "chip": "EC718PM",
+      "flash_bytes": 4194304,
+      "modem": "NT26F6D0",
+      "modempkg": "F6D_D",
+      "releases": [
+        {
+          "version": "1.0.1",
+          "status": "published",
+          "bin_url": "./firmware/v1.0.1-lierda-ec718pm-lite.binpkg",
+          "source_filename": "v1.0.1-lierda-ec718pm-lite.binpkg",
+          "byte_length": 3449160,
+          "sha256": "41cfc6373f03c0d3bf4d480dfabec0c527bfc03b5fbdd4849e984715c266f98e",
+          "recommended": true
+        }
+      ]
+    },
+    {
+      "platform": "lierda",
+      "slug": "lierda-ec718pm-pro",
+      "model": "EC718PM-Pro语音板",
       "chip": "EC718PM",
       "flash_bytes": 4194304,
       "modem": "NT26F6D0",
@@ -197,31 +197,33 @@
         {
           "version": "1.0.0",
           "status": "published",
-          "bin_url": "./firmware/lite-v1.0.0-41cfc6373f03c0d3bf4d480dfabec0c527bfc03b5fbdd4849e984715c266f98e.binpkg",
-          "source_filename": "2026_11_21_16_05_10_lite.binpkg",
-          "byte_length": 3449160,
-          "sha256": "41cfc6373f03c0d3bf4d480dfabec0c527bfc03b5fbdd4849e984715c266f98e",
+          "bin_url": "./firmware/v1.0.0-lierda-ec718pm-pro.binpkg",
+          "source_filename": "v1.0.0-lierda-ec718pm-pro.binpkg",
+          "byte_length": 7874088,
+          "sha256": "ea76fe7dd380c64f14a48e6ed0f29d29efddb28fa27cee5ce973a5fd3dede5a3",
           "recommended": true
         }
       ]
     },
     {
-      "slug": "lierda-ec718pm-pro",
-      "model": "NT26F6D0-Pro-EC718PM语音板",
-      "chip": "EC718PM",
-      "flash_bytes": 4194304,
-      "modem": "NT26F6D0",
-      "modempkg": "F6D_D",
-      "releases": []
-    },
-    {
+      "platform": "lierda",
       "slug": "lierda-ec718hm-pro",
-      "model": "NT26F9D0-Pro-EC718HM视频通话板",
+      "model": "EC718HM-Pro视频通话板",
       "chip": "EC718HM",
       "flash_bytes": 8388608,
       "modem": "NT26F9D0",
       "modempkg": "F9D_D",
-      "releases": []
+      "releases": [
+        {
+          "version": "0.1.0",
+          "status": "published",
+          "bin_url": "./firmware/v0.1.0-lierda-ec718hm-pro.binpkg",
+          "source_filename": "v0.1.0-lierda-ec718hm-pro.binpkg",
+          "byte_length": 4686592,
+          "sha256": "e9daa7f430c7369520bc7acb5963be895c3aa5efe2f6ef5a2fa5d983be9b682f",
+          "recommended": true
+        }
+      ]
     }
   ]
 }

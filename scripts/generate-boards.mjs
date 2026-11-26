@@ -1,3 +1,4 @@
+import { flashProtocol, localPlatforms, platformDefinitions } from '../src/catalog-platforms.mjs';
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { link, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
@@ -301,7 +302,10 @@ function assemble(entries) {
   const images = new Map();
   for (const entry of entries) {
     if (!boards.has(entry.slug)) {
+      const curated = curatedCatalog.boards.find(board => board.slug === entry.slug && board.chip === entry.chip);
+      const platform = curated?.platform ?? flashProtocol(entry);
       boards.set(entry.slug, {
+        platform,
         slug: entry.slug,
         model: entry.model,
         chip: entry.chip,
@@ -481,6 +485,7 @@ function preservePublishedBins(generated, previousBoards) {
     }
     if (!releases.length) continue;
     const board = current ?? { ...previous, releases };
+    if (previous.platform) board.platform = previous.platform;
     if (curated?.model === previous.model) board.model = previous.model;
     const selected = releases.find(release => release.status === 'published' && release.recommended) ??
       releases.find(release => release.status === 'published');
@@ -523,17 +528,19 @@ async function previousCatalog(path) {
   try {
     contents = await readFile(path, 'utf8');
   } catch (error) {
-    if (error.code === 'ENOENT') return [];
+    if (error.code === 'ENOENT') return { boards: [] };
     throw error;
   }
   try {
-    const { boards } = JSON.parse(contents.replace(/^\uFEFF/u, ''));
+    const catalog = JSON.parse(contents.replace(/^\uFEFF/u, ''));
+    const { boards } = catalog;
+    if (catalog.platforms !== undefined) platformDefinitions(catalog.platforms);
     if (!Array.isArray(boards) || !boards.every(board =>
       typeof board?.slug === 'string' && Array.isArray(board.releases)) ||
       new Set(boards.map(board => board.slug)).size !== boards.length) {
       throw new Error('缺少有效的板卡或版本列表。');
     }
-    return boards;
+    return catalog;
   } catch (error) {
     console.warn('[WARN] 已有 boards.json 无法解析，将在所有来源同步成功后重建：' + error.message);
     return null;
@@ -544,7 +551,7 @@ export async function generateCatalog(output, includePrerelease = false) {
   const firmware = join(output, 'firmware');
   const path = join(output, 'boards.json');
   const previous = await previousCatalog(path);
-  const previousBoards = previous ?? [];
+  const previousBoards = previous?.boards ?? [];
   await mkdir(firmware, { recursive: true });
   const temporary = await mkdtemp(join(output, '.catalog-'));
   try {
@@ -563,11 +570,26 @@ export async function generateCatalog(output, includePrerelease = false) {
       return { boards: [], failed: true };
     }
     const synced = bin.status === 'fulfilled' || (lierda.status === 'fulfilled' && lierda.value.synced);
-    const boards = synced ? [...binBoards, ...lierdaBoards] : previousBoards;
-    if (synced && JSON.stringify(boards) !== JSON.stringify(previousBoards)) {
-      const staged = join(temporary, 'boards.json');
-      await writeFile(staged, JSON.stringify({ boards }, null, 2) + '\n');
-      await rename(staged, path);
+    const boards = synced ? [...binBoards, ...lierdaBoards].map(({ platform_name, ...board }) => ({
+      ...board, platform: board.platform ?? flashProtocol(board),
+    })) : previousBoards;
+    if (synced) {
+      const names = platformDefinitions(previous?.platforms ?? []);
+      for (const row of previousBoards) {
+        if (row.platform && row.platform_name && !names.has(row.platform)) names.set(row.platform, row.platform_name);
+      }
+      const defaults = platformDefinitions(curatedCatalog.platforms);
+      for (const { platform } of boards) {
+        if (!names.has(platform)) names.set(platform, defaults.get(platform) ?? localPlatforms.get(platform));
+      }
+      const platforms = Array.from(names, ([platform, platform_name]) => ({ platform, platform_name }));
+      platformDefinitions(platforms);
+      const catalog = { platforms, boards };
+      if (JSON.stringify(previous) !== JSON.stringify(catalog)) {
+        const staged = join(temporary, 'boards.json');
+        await writeFile(staged, JSON.stringify(catalog, null, 2) + '\n');
+        await rename(staged, path);
+      }
     }
     console.log(`固件目录共 ${boards.length} 款板卡、${boards.reduce((n, b) => n + b.releases.length, 0)} 个版本。`);
     return { boards, failed };

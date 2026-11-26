@@ -3,7 +3,8 @@ import { previewOffset, timestampedPreview } from './serial-preview.mjs';
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { SplitWorkbench } from './SplitWorkbench.jsx';
 import brandMark from './assets/xiaotai-brand-mark.png';
-import { canonicalBoardSlug, loadBoards } from './catalog.mjs';
+import { canonicalBoardSlug, loadBoardCatalog } from './catalog.mjs';
+import { flashProtocol, localPlatforms } from './catalog-platforms.mjs';
 import { prepareFirmware } from './firmware.mjs';
 import { lierdaBoards, prepareLierdaFirmware } from './lierda-firmware.mjs';
 import { lierdaBoardForLink } from './lierda-boards.mjs';
@@ -27,10 +28,9 @@ const recommendedVersion = (board) =>
   board?.versions.find((version) => version.recommended)?.version ??
   board?.versions[0]?.version ??
   '';
-function platformFor(chip) {
-  if (chip === 'BK7258') return 'bk7258';
-  return lierdaBoards.some((board) => board.chip === chip) ? 'lierda' : 'esp32';
-}
+const offlineLierdaBoards = lierdaBoards.map(board => ({
+  slug: board.slug, model: board.name, chip: board.chip, versions: [],
+}));
 let nextSegmentId = 0;
 const newSegment = () => ({ id: nextSegmentId++, file: null, offset: '' });
 
@@ -153,7 +153,7 @@ function FlashOptions({ settings, change, disabled, official, connected, bk, lie
 }
 
 function FirmwarePicker({
-  catalog,
+  catalog, boardPicker, supported,
   origin,
   choose,
   selection,
@@ -198,7 +198,7 @@ function FirmwarePicker({
             name="source"
             value="local"
             checked={origin === 'local'}
-            disabled={busy}
+            disabled={busy || !supported}
             onChange={() => choose('local')}
           />{' '}
           {t('本地 BIN')}
@@ -208,38 +208,16 @@ function FirmwarePicker({
         {t(catalog.message)}
       </small>
       <div id="official" className="options" hidden={origin !== 'official'}>
-        <label className="field">
-          {t('开发板型号')}
-          <select
-            id="board"
-            value={selection.slug}
-            disabled={busy}
-            onChange={(event) => {
-              const next = catalog.boards.find(
-                (candidate) => candidate.slug === event.target.value,
-              );
-              change({
-                slug: event.target.value,
-                version: recommendedVersion(next),
-              });
-            }}
-          >
-            {catalog.boards.map(({ slug, model }) => (
-              <option key={slug} value={slug}>
-                {t(model)}
-              </option>
-            ))}
-          </select>
-          <small>{t('按完整板卡型号选择固件。')}</small>
-        </label>
+        {boardPicker}
         <label className="field">
           {t('固件版本')}
           <select
             id="version"
             value={selection.version}
-            disabled={busy}
+            disabled={busy || !board?.versions.length}
             onChange={(event) => change({ version: event.target.value })}
           >
+            {!board?.versions.length && <option value="">{t('暂无正式版本')}</option>}
             {board?.versions.map(({ version, recommended }) => (
               <option key={version} value={version}>
                 {releaseLabel(version)}
@@ -255,7 +233,7 @@ function FirmwarePicker({
         </label>
         {board && (
           <p className="callout span" id="manifest">
-            {board.chip} {t('· 完整镜像 · 起始地址 0x0')}
+            {supported ? <>{board.chip} {t('· 完整镜像 · 起始地址 0x0')}</> : release?.source_filename ?? release?.bin_url.split('/').pop()}
           </p>
         )}
       </div>
@@ -613,7 +591,7 @@ function LogConsole({ workbench, rate, setRate, platform }) {
             <button
               className="btn primary"
               type="button"
-              disabled={!serialAvailable || busy}
+              disabled={platform === undefined || !serialAvailable || busy}
               onClick={() => workbench.toggleMonitor(rate, platform)}
             >
               {monitoring ? t('断开日志串口') : t('连接日志串口')}
@@ -913,25 +891,36 @@ export function App() {
     lierdaBoardForLink(new URL(location.href).searchParams.get('board')),
   );
   const [originChoice, setOrigin] = useState(requestedLierdaBoard ? null : 'local');
-  const [platform, setPlatform] = useState(requestedLierdaBoard ? 'lierda' : 'esp32');
-  const [lierdaSelection, setLierdaChoice] = useState(() =>
+  const [chosenGroup, setGroup] = useState(requestedLierdaBoard ? 'lierda' : 'esp32');
+  const [lierdaChoice, setLierdaChoice] = useState(() =>
     initialLierdaSelection(requestedLierdaBoard),
   );
-  const lierda = platform === 'lierda';
-  const lierdaBoard = lierdaBoards.find(({ model }) => model === lierdaSelection.model);
-  const onlineBoard = catalog.boards.find(({ slug }) => slug === lierdaBoard.slug);
-  const lierdaBoardName = onlineBoard?.model ?? lierdaBoard.name;
-  const lierdaReleases = catalog.loading ? undefined : catalog.unavailable ? null : onlineBoard?.versions ?? [];
-  const lierdaRelease = lierdaReleases?.find(({ version }) => version === lierdaSelection.versions[lierdaBoard.model])
-    ?? lierdaReleases?.find(({ recommended }) => recommended)
-    ?? lierdaReleases?.[0];
   const [selection, setSelection] = useState(() => ({
-    slug: '',
+    slug: requestedLierdaBoard?.slug ?? '',
     version: '',
     merged: null,
     segmented: false,
     segments: [newSegment()],
   }));
+  const hasCatalog = Boolean(catalog.platforms?.size);
+  const groups = hasCatalog ? catalog.platforms : localPlatforms;
+  const group = groups.has(chosenGroup) ? chosenGroup : groups.keys().next().value;
+  const onlineBoards = catalog.boards.filter(board => board.platform === group);
+  const includeLocalLierda = lierdaChoice.origin === 'local' && onlineBoards.some(board => lierdaBoardForLink(board.slug));
+  const missingLierdaBoards = includeLocalLierda
+    ? offlineLierdaBoards.filter(board => !catalog.boards.some(entry => entry.slug === board.slug)) : [];
+  const platformBoards = hasCatalog ? [...onlineBoards, ...missingLierdaBoards]
+    : group === 'lierda' ? offlineLierdaBoards : [];
+  const board = platformBoards.find(candidate => candidate.slug === selection.slug) ?? platformBoards[0];
+  const protocol = board ? flashProtocol(board) : hasCatalog ? null : group;
+  const lierda = protocol === 'lierda';
+  const lierdaBoard = lierdaBoardForLink(board?.slug);
+  const lierdaBoardName = board?.model;
+  const lierdaSelection = { ...lierdaChoice, model: lierdaBoard?.model };
+  const lierdaReleases = catalog.loading ? undefined : catalog.unavailable ? null : board?.versions;
+  const lierdaRelease = lierdaReleases?.find(({ version }) => version === lierdaChoice.versions[lierdaBoard?.model])
+    ?? lierdaReleases?.find(({ recommended }) => recommended)
+    ?? lierdaReleases?.[0];
   const [settings, setSettings] = useState({
     ...defaultSettings,
     'lierda-write-rate': String(USB_BAUD),
@@ -973,16 +962,16 @@ export function App() {
 
   useEffect(() => {
     const abort = new AbortController();
-    const requested = requestedLierdaBoard ? null : new URL(location.href).searchParams.get('board');
+    const requested = requestedLierdaBoard?.slug ?? new URL(location.href).searchParams.get('board');
     const configURL = new URL('boards-source.json', document.baseURI);
-    loadBoards(configURL, abort.signal)
-      .then((boards) => {
+    loadBoardCatalog(configURL, abort.signal)
+      .then(({ boards, platforms }) => {
         if (abort.signal.aborted) return;
         const requestedBoard = boards.find((board) => board.slug === requested) ??
           boards.find((board) => board.slug === canonicalBoardSlug(requested));
-        const board = requestedBoard ?? boards.find((entry) => platformFor(entry.chip) !== 'lierda');
+        const board = requestedBoard ?? boards.find(entry => entry.platform === platforms.keys().next().value);
         setCatalog({
-          boards,
+          boards, platforms,
           message:
             requested && !requestedBoard
               ? '这块开发板暂无已发布的在线固件，可导入本地 BIN。'
@@ -990,8 +979,12 @@ export function App() {
                 ? ''
                 : '暂无已发布的小钛固件，可导入本地 BIN。',
         });
-        if (board && !requestedLierdaBoard && !userSelected.current) {
-          setPlatform(platformFor(board.chip));
+        if (!board && platforms.size && !userSelected.current) {
+          setGroup(platforms.keys().next().value);
+          setOrigin('official');
+        }
+        if (board && !userSelected.current) {
+          setGroup(board.platform);
           setSelection((old) => ({
             ...old,
             slug: board.slug,
@@ -1014,15 +1007,13 @@ export function App() {
 
   useEffect(() => {
     if (!detectedLierdaBoard) return;
-    setLierdaChoice((current) => {
-      if (current.model === detectedLierdaBoard.model) return current;
-      return {
-        ...current,
-        model: detectedLierdaBoard.model,
-        file: null,
-      };
-    });
-  }, [device, detectedLierdaBoard]);
+    const detected = catalog.boards.find(entry => entry.slug === detectedLierdaBoard.slug);
+    if (catalog.boards.length && !detected && lierdaChoice.origin !== 'local') return;
+    if (detected) setGroup(detected.platform);
+    setSelection(current => ({ ...current, slug: detectedLierdaBoard.slug }));
+    setLierdaChoice(current => current.model === detectedLierdaBoard.model ? current :
+      { ...current, model: detectedLierdaBoard.model, file: null });
+  }, [detectedLierdaBoard, catalog.boards, lierdaChoice.origin]);
 
   useEffect(() => {
     const changed = () => setFullscreen(Boolean(document.fullscreenElement));
@@ -1046,26 +1037,19 @@ export function App() {
     setSelection((old) => ({ ...old, ...patch }));
   }
 
-  function changeLierdaModel(model) {
-    setLierdaChoice((current) => ({
-      ...current,
-      model,
-      file: null,
-    }));
+  function changeBoard(next) {
+    if (flashProtocol(next) !== protocol) workbench.resetForPlatform();
+    changeSelection({ slug: next.slug, version: recommendedVersion(next), merged: null,
+      segmented: false, segments: [newSegment()] });
+    setLierdaChoice(current => ({ ...current, model: lierdaBoardForLink(next.slug)?.model, file: null }));
   }
 
   function changeSetting(key, value) {
     setSettings((old) => ({ ...old, [key]: value }));
   }
 
-  const bk = platform === 'bk7258';
-  const platformBoards = catalog.boards.filter(
-    (board) => platformFor(board.chip) === platform,
-  );
-  const origin = originChoice ?? (platformBoards.length ? 'official' : 'local');
-  const board =
-    platformBoards.find(({ slug }) => slug === selection.slug) ??
-    platformBoards[0];
+  const bk = protocol === 'bk7258';
+  const origin = !protocol ? 'official' : originChoice ?? (hasCatalog ? 'official' : 'local');
   const selected = {
     ...selection,
     slug: board?.slug ?? '',
@@ -1078,21 +1062,17 @@ export function App() {
 
   function changePlatform(value) {
     userSelected.current = true;
-    setPlatform(value);
-    if (value === 'lierda') {
-      setLierdaChoice((current) => ({ ...current, file: null }));
-    } else {
-      changeSelection({ merged: null, segmented: false, segments: [newSegment()] });
-    }
+    setGroup(value);
+    changeSelection({ slug: '', version: '', merged: null, segmented: false, segments: [newSegment()] });
+    setLierdaChoice(current => ({ ...current, model: undefined, file: null }));
     workbench.resetForPlatform();
     workbench.setTab('log');
-    if (value !== 'lierda' && originChoice !== null && !catalog.boards.some((board) => platformFor(board.chip) === value))
-      setOrigin('local');
   }
 
   let ready;
   let readinessMessage;
-  if (!serialAvailable)
+  if (!protocol) readinessMessage = t('此板型可浏览版本，暂不支持网页烧录。');
+  else if (!serialAvailable)
     readinessMessage = t('请在桌面 Chrome 或 Edge 中打开 HTTPS 烧录页。');
   else if (lierda) {
     if (lierdaBoard.flashUnavailable) {
@@ -1183,10 +1163,11 @@ export function App() {
 
   function connectDevice(reusePort = false, chooseOther = false) {
     userSelected.current = true;
+    if (!protocol || catalog.loading) return;
     if (lierda) {
       if (invalidLierdaBaudrate) return;
       workbench.connect({
-        platform,
+        platform: protocol,
         baudrate: lierdaBaudrate,
         downloadOnly: settings['lierda-before-reset'] === 'manual',
       }, reusePort, chooseOther);
@@ -1194,7 +1175,7 @@ export function App() {
     }
     workbench.connect(
       {
-        platform,
+        platform: protocol,
         baudrate: Number(settings['write-rate']),
         before: settings[bk ? 'bk-before-reset' : 'before-reset'],
       },
@@ -1215,6 +1196,20 @@ export function App() {
     }
   }
 
+  const boardPicker = (
+    <label className={lierda ? 'field span' : 'field'}>
+      {t('开发板型号')}
+      <select id={lierda ? 'lierda-board' : 'board'} value={board?.slug ?? ''} disabled={busy}
+        onChange={event => changeBoard(platformBoards.find(entry => entry.slug === event.target.value))}>
+        {platformBoards.map(entry => (
+          <option key={entry.slug} value={entry.slug}
+            disabled={Boolean(device || workbench.monitoring) && flashProtocol(entry) !== protocol}>
+            {entry.slug} · {t(entry.model)}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
   const completed = progress?.outcome === 'success';
   const showResetHint = bk && !device && !busy && !completed;
   const manualLierda = lierda && settings['lierda-before-reset'] === 'manual';
@@ -1292,13 +1287,11 @@ export function App() {
           <label className="row">
             {t('芯片平台')}
             <select
-              value={platform}
-              disabled={busy || Boolean(device) || workbench.monitoring}
+              value={group}
+              disabled={catalog.loading || busy || Boolean(device) || workbench.monitoring}
               onChange={(event) => changePlatform(event.target.value)}
             >
-              <option value="esp32">{t('乐鑫 Espressif（ESP32 系列）')}</option>
-              <option value="bk7258">{t('博通集成 Beken（BK7258）')}</option>
-              <option value="lierda">{t('利尔达（移芯PM HM系列）')}</option>
+              {Array.from(groups, ([id, name]) => <option key={id} value={id}>{t(name)}</option>)}
             </select>
           </label>
           <p
@@ -1333,7 +1326,7 @@ export function App() {
               <button
                 className="btn primary"
                 type="button"
-                disabled={busy || !serialAvailable || invalidLierdaBaudrate}
+                disabled={busy || catalog.loading || !protocol || !serialAvailable || invalidLierdaBaudrate}
                 aria-describedby={showResetHint ? 'bk-reset-hint' : lierda && !busy ? 'lierda-port-hint' : undefined}
                 onClick={() => connectDevice(!selectLierdaDownload && canReconnect)}
               >
@@ -1343,7 +1336,7 @@ export function App() {
                 <button
                   className="btn"
                   type="button"
-                  disabled={busy || !serialAvailable || invalidLierdaBaudrate}
+                  disabled={busy || catalog.loading || !protocol || !serialAvailable || invalidLierdaBaudrate}
                   onClick={() => connectDevice(false, true)}
                 >
                   {t('选择其他串口')}
@@ -1374,17 +1367,18 @@ export function App() {
               {lierda ? (
                 <LierdaFirmwarePicker
                   board={lierdaBoard}
-                  boardName={lierdaBoardName}
+                  boardPicker={boardPicker}
                   releases={lierdaReleases}
                   release={lierdaRelease}
                   selection={lierdaSelection}
                   setSelection={setLierdaChoice}
-                  onModelChange={changeLierdaModel}
                   busy={busy}
                 />
               ) : (
                 <FirmwarePicker
-                  key={platform}
+                  key={group}
+                  supported={Boolean(protocol)}
+                  boardPicker={boardPicker}
                   catalog={{ ...catalog, boards: platformBoards }}
                   origin={origin}
                   choose={(value) => {
@@ -1397,7 +1391,7 @@ export function App() {
                   bk={bk}
                 />
               )}
-              <FlashOptions
+              {protocol && <FlashOptions
                 key={lierda ? 'lierda' : 'other'}
                 settings={settings}
                 change={changeSetting}
@@ -1407,7 +1401,7 @@ export function App() {
                 bk={bk}
                 lierda={lierda}
                 invalidLierdaBaudrate={invalidLierdaBaudrate}
-              />
+              />}
               {lierda && flashBackup && (
                 <button className="btn actions" type="button" disabled={busy} onClick={workbench.downloadFlashBackup}>
                   {t('下载烧录前备份')}
@@ -1427,7 +1421,7 @@ export function App() {
                       className="btn"
                       type="button"
                       disabled={busy}
-                      onClick={() => workbench.showDeviceLog(rate, platform)}
+                      onClick={() => workbench.showDeviceLog(rate, protocol)}
                     >
                       {t('查看设备日志')}
                     </button>
@@ -1483,7 +1477,7 @@ export function App() {
               )}
             </section>
           </section>
-          <LogConsole workbench={workbench} rate={rate} setRate={setRate} platform={platform} />
+          <LogConsole workbench={workbench} rate={rate} setRate={setRate} platform={catalog.loading ? undefined : protocol} />
         </SplitWorkbench>
       </main>
       <HelpDialog dialogRef={helpDialog} onClose={() => setHelpOpen(false)} />

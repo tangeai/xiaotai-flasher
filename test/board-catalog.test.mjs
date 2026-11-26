@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { canonicalBoardSlug, downloadFirmware, publishedBoards } from '../src/catalog.mjs';
+import { canonicalBoardSlug, downloadFirmware, publishedBoards, publishedCatalog } from '../src/catalog.mjs';
+import { catalogPlatforms, flashProtocol } from '../src/catalog-platforms.mjs';
 import { lierdaBoards } from '../src/lierda-boards.mjs';
 
 test('the manual firmware catalog loads and uses the Nginx BIN paths', () => {
@@ -30,14 +31,45 @@ test('the manual firmware catalog loads and uses the Nginx BIN paths', () => {
   }
 });
 
-test('only listed ESP32 chips and BK7258 appear in a mixed catalog', () => {
+test('legacy catalogs only list supported chips', () => {
   const board = JSON.parse(readFileSync(new URL('../boards.json', import.meta.url))).boards[0];
+  delete board.platform;
+  delete board.platform_name;
   const chips = ['OTHER', 'ESP32-X99', 'ESP32-C3', 'BK7258'];
   const boards = chips.map((chip, index) => ({ ...board, chip, slug: 'board-' + index }));
   assert.deepEqual(
     publishedBoards({ boards }, 'https://example.com/boards.json').map((entry) => entry.chip),
     ['ESP32-C3', 'BK7258'],
   );
+});
+
+test('catalog platform IDs group boards independently of chip and protocol', () => {
+  const row = { chip: 'EC718PM', model: 'Voice board', releases: [], platform: 'voice', platform_name: '语音' };
+  const boards = publishedBoards({ boards: [
+    { ...row, slug: 'voice-a' },
+    { ...row, slug: 'other', platform: 'lab', platform_name: '验证板' },
+    { ...row, slug: 'voice-b', chip: 'ESP32-S3' },
+  ] }, 'https://example.com/boards.json');
+  assert.deepEqual([...catalogPlatforms(boards)], [['voice', '语音'], ['lab', '验证板']]);
+  assert.deepEqual(boards.filter(board => board.platform === 'voice').map(board => board.slug), ['voice-a', 'voice-b']);
+  assert.deepEqual(boards.map(flashProtocol), [null, null, 'esp32']);
+  assert.deepEqual(boards[0].versions, []);
+  assert.throws(() => publishedBoards({ boards: [
+    { ...row, slug: 'first' }, { ...row, slug: 'second', platform_name: 'Other' },
+  ] }, 'https://example.com/boards.json'), /平台/);
+});
+
+test('top-level platform definitions set the menu order and resolve board references', () => {
+  const platforms = [
+    { platform: 'lab', platform_name: '实验室' }, { platform: 'voice', platform_name: '语音' },
+  ];
+  const row = { slug: 'voice-a', model: 'Voice board', chip: 'EC718PM', releases: [], platform: 'voice' };
+  const url = 'https://example.com/boards.json';
+  const catalog = publishedCatalog({ platforms, boards: [row, { ...row, slug: 'voice-b' }] }, url);
+  assert.deepEqual([...catalog.platforms], [['lab', '实验室'], ['voice', '语音']]);
+  assert.deepEqual(catalog.boards.map(board => board.platform), ['voice', 'voice']);
+  assert.throws(() => publishedCatalog({ platforms, boards: [{ ...row, platform: 'missing' }] }, url), /平台/);
+  assert.throws(() => publishedCatalog({ platforms: [...platforms, platforms[0]], boards: [] }, url), /平台/);
 });
 
 test('cancels an in-progress firmware download when the device disconnects', async (t) => {
