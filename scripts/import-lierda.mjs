@@ -3,12 +3,12 @@ import { link, lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'no
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 
-import { getLierdaHardwareProfile, parseLierdaPackage } from '../src/lierda-package.mjs';
-import { lierdaBoards } from '../src/lierda-boards.mjs';
+import { parseLierdaPackage } from '../src/lierda-package.mjs';
+import { lierdaBoardForLink, lierdaBoards, lierdaPackageSizeLimit, lierdaReleaseFilename } from '../src/lierda-boards.mjs';
 
 const repository = 'tangeai/xiaotai-lierda';
 const releaseApi = 'https://api.github.com/repos/' + repository + '/releases';
-const tagPattern = /^(lite|pro)-v(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})$/;
+const tagPattern = /^(?:(lite|pro)-)?v(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})$/;
 const packageName = /^[a-z0-9][a-z0-9._+-]{0,249}\.binpkg$/i;
 const checksumName = 'SHA256SUMS.txt';
 
@@ -37,7 +37,7 @@ async function request(fetcher, url, { api = false, decode }) {
 }
 
 async function listReleases(fetcher, includePrerelease) {
-  const byProduct = { lite: [], pro: [] };
+  const releases = [];
   for (let page = 1; ; page += 1) {
     const { data, next } = await request(fetcher, `${releaseApi}?per_page=100&page=${page}`, {
       api: true,
@@ -49,18 +49,39 @@ async function listReleases(fetcher, includePrerelease) {
     for (const release of data) {
       if (release?.draft || typeof release?.tag_name !== 'string') continue;
       const tag = tagPattern.exec(release.tag_name);
-      if (!tag) continue;
-      const product = tag[1];
-      if (release.prerelease && (product === 'pro' || !includePrerelease)) continue;
-      byProduct[product].push({ release, version: tag.slice(2).map(Number) });
+      if (!tag || (release.prerelease && !includePrerelease)) continue;
+      releases.push({ release, tag });
     }
     if (!next) break;
   }
-  for (const releases of Object.values(byProduct)) {
-    releases.sort((a, b) => b.version[0] - a.version[0]
-      || b.version[1] - a.version[1] || b.version[2] - a.version[2]);
+  return releases;
+}
+
+function releasesForBoard(board, releases) {
+  const matches = [];
+  const suffix = `-${board.slug}.binpkg`;
+  for (const { release, tag } of releases) {
+    if (release.prerelease && board.firmwareKey !== 'lite') continue;
+    if (tag[1]) {
+      if (tag[1] === board.firmwareKey) {
+        matches.push({ release, version: tag.slice(2).map(Number), assetName: null });
+      }
+      continue;
+    }
+    const packages = release.assets?.filter(asset => typeof asset.name === 'string' && asset.name.toLowerCase().endsWith(suffix));
+    if (!packages?.length) continue;
+    if (packages.length !== 1) throw new Error(`${release.tag_name} 包含多个 ${board.slug} 固件附件。`);
+    const assetName = packages[0].name;
+    const versionTag = tagPattern.exec(assetName.slice(0, -suffix.length));
+    if (!versionTag || versionTag[1] || lierdaReleaseFilename(board, versionTag.slice(2).join('.')) !== assetName) {
+      throw new Error(`${release.tag_name} 的 ${board.slug} 固件文件名无效：${assetName}`);
+    }
+    matches.push({ release, version: versionTag.slice(2).map(Number), assetName });
   }
-  return byProduct;
+  return matches.sort((a, b) => b.version[0] - a.version[0]
+    || b.version[1] - a.version[1] || b.version[2] - a.version[2]
+    || Number(Boolean(a.release.prerelease)) - Number(Boolean(b.release.prerelease))
+    || Number(Boolean(b.assetName)) - Number(Boolean(a.assetName)));
 }
 
 function checkedAsset(release, asset, maxSize) {
@@ -123,19 +144,19 @@ async function cachedBytes(path, size) {
 }
 
 async function importProductReleases(board, releases, output, fetcher, writeLegacyLiteCatalog = false) {
-  const { model, modem, modempkg } = board;
-  const product = board.slug.slice('lierda-'.length);
-  const maxPackageSize = getLierdaHardwareProfile(model).size + 0x10000;
+  const { model, modem, modempkg, firmwareKey } = board;
+  const maxPackageSize = lierdaPackageSizeLimit(board);
   await mkdir(output, { recursive: true });
-  const stage = await mkdtemp(join(output, '.' + product + '-'));
+  const stage = await mkdtemp(join(output, '.' + firmwareKey + '-'));
   const catalog = { releases: [] };
   const staged = [];
   const seen = new Set();
   try {
-    for (const { release, version } of releases) {
+    const versions = new Map();
+    for (const { release, version, assetName } of releases) {
       if (seen.has(release.tag_name)) throw new Error(`重复的发布标签：${release.tag_name}`);
       seen.add(release.tag_name);
-      const packages = release.assets?.filter(({ name }) => packageName.test(name));
+      const packages = release.assets?.filter(({ name }) => assetName ? name === assetName : packageName.test(name));
       const checksums = release.assets?.filter(({ name }) => name === checksumName);
       if (packages?.length !== 1 || checksums?.length !== 1) {
         throw new Error(`${release.tag_name} 需要一个 BINPKG 附件和一个 ${checksumName}。`);
@@ -147,7 +168,16 @@ async function importProductReleases(board, releases, output, fetcher, writeLega
       if (image.digest && sha256 !== image.digest) {
         throw new Error(`${release.tag_name} 的 SHA-256 校验记录不一致。`);
       }
-      const filename = `${release.tag_name}-${sha256}.binpkg`;
+      const versionName = version.join('.');
+      const previous = versions.get(versionName);
+      if (previous) {
+        if (previous.sha256 !== sha256 || previous.size !== image.size) {
+          throw new Error(`${board.slug} 的版本 ${versionName} 在多个标签下的固件不一致。`);
+        }
+        continue;
+      }
+      versions.set(versionName, { sha256, size: image.size });
+      const filename = `${firmwareKey}-v${versionName}-${sha256}.binpkg`;
       const destination = join(output, filename);
       const existing = await cachedBytes(destination, image.size);
       const bytes = existing ?? await downloadAsset(fetcher, image);
@@ -159,7 +189,7 @@ async function importProductReleases(board, releases, output, fetcher, writeLega
       }
       catalog.releases.push({
         modem, modempkg,
-        version: version.join('.'), filename, source_filename: pkg.name,
+        version: versionName, filename, source_filename: pkg.name,
         byte_length: bytes.length, sha256,
         ...(release.prerelease ? { prerelease: true } : {}),
         recommended: false,
@@ -188,18 +218,18 @@ async function importProductReleases(board, releases, output, fetcher, writeLega
 }
 
 export async function importLierdaLiteCatalog(output, fetcher = fetch) {
-  const { lite } = await listReleases(fetcher, false);
-  if (lite.length === 0) return null;
-  const board = lierdaBoards.find(({ slug }) => slug === 'lierda-lite');
-  return importProductReleases(board, lite, output, fetcher, true);
+  const board = lierdaBoards.find(({ firmwareKey }) => firmwareKey === 'lite');
+  const releases = releasesForBoard(board, await listReleases(fetcher, false));
+  if (releases.length === 0) return null;
+  return importProductReleases(board, releases, output, fetcher, true);
 }
 
 export async function collectLierdaBoards(firmwareDir, { includePrerelease = false, previousBoards = [], fetcher = fetch } = {}) {
-  let byProduct;
+  let releases;
   let failed = false;
   let synced = false;
   try {
-    byProduct = await listReleases(fetcher, includePrerelease);
+    releases = await listReleases(fetcher, includePrerelease);
   } catch (error) {
     failed = true;
     console.error('[ERROR] 无法同步利尔达 Release 列表：' + error.message);
@@ -207,11 +237,10 @@ export async function collectLierdaBoards(firmwareDir, { includePrerelease = fal
   const boards = [];
   for (const board of lierdaBoards) {
     const { slug, chip, name, flashBytes, modem, modempkg } = board;
-    const product = slug.slice('lierda-'.length);
     const entry = { slug, model: name, chip, flash_bytes: flashBytes, modem, modempkg, releases: [] };
-    if (byProduct) {
+    if (releases) {
       try {
-        const catalog = await importProductReleases(board, byProduct[product], firmwareDir, fetcher);
+        const catalog = await importProductReleases(board, releasesForBoard(board, releases), firmwareDir, fetcher);
         entry.releases = catalog.releases.map(({ version, filename, source_filename, byte_length, sha256, recommended, prerelease }) => ({
           version, status: 'published', bin_url: './firmware/' + filename,
           source_filename, byte_length, sha256, recommended,
@@ -225,8 +254,9 @@ export async function collectLierdaBoards(firmwareDir, { includePrerelease = fal
         console.error('[ERROR] 无法同步 ' + name + '：' + error.message);
       }
     }
-    const previous = previousBoards.find((item) => item.slug === slug);
-    if (previous) boards.push(previous);
+    const previous = previousBoards.find(item => item.slug === slug)
+      ?? previousBoards.find(item => lierdaBoardForLink(item.slug) === board);
+    if (previous) boards.push({ ...entry, releases: previous.releases });
   }
   return { boards, failed, synced };
 }

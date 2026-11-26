@@ -1,4 +1,5 @@
 import { LocalizedError, t, localizedMessage } from './i18n.mjs';
+import { verifyLierdaAgentBoot } from './lierda-agentboot.mjs';
 // Host-side protocol adapted from yuzhan-tech/ectool v0.1.0 (MIT).
 // d8b472126a9a070439df6b3c5677071a01b0c026
 // https://github.com/yuzhan-tech/ectool/tree/d8b472126a9a070439df6b3c5677071a01b0c026
@@ -6,10 +7,18 @@ import { LocalizedError, t, localizedMessage } from './i18n.mjs';
 
 const DOWNLOAD_VENDOR = 0x17d1;
 const DOWNLOAD_PRODUCT = 0x0001;
-const AGENT_BYTE_LENGTH = 50_032;
-const AGENT_DIGEST = "045bd0c74a030143230f07484e4711600005b992e3b0776be042e42d141a38e5";
 const USB_BAUD = 921_600;
-const EC718PM_ROM_PREFIX = "0000030301000000";
+// AgentBoot stores the requested baud rate in units of 100 in a 15-bit field.
+export function parseLierdaBaudrate(value) {
+  if (typeof value === 'string' && /^[0-9]+$/u.test(value)) value = Number(value);
+  return Number.isInteger(value) && value >= 100 && value <= 0x7fff * 100 && value % 100 === 0
+    ? value : null;
+}
+
+const VERIFIED_USB_ROM_ID = '0000000103030000';
+// Additional ROM IDs in the EC718PM/HM USB profiles of FlashToolCLI V4.1.22.
+// Only the verified ID can proceed with the AgentBoot bundled by the website.
+const ADDITIONAL_VENDOR_ROM_IDS = new Set(['0000000203030000', '0000000303030000']);
 
 const ROM_SYNC = 0x2b02d300;
 const LPC_SYNC = 0x2b02d3cd;
@@ -40,13 +49,38 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function withTimeout(task, ms, detail) {
+export function deferredSerialResult() {
+  let resolve;
+  let reject;
+  const promise = new Promise((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
+export async function waitForSerialOperation(task, signal) {
+  if (!signal) return task;
+  let onAbort;
+  const cancelled = new Promise((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    if (signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([cancelled, task]);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+}
+
+async function withTimeout(task, ms, detail, signal) {
   let timer;
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => reject(new SerialTimeout(detail)), Math.max(0, ms));
   });
   try {
-    return await Promise.race([task, timeout]);
+    return await waitForSerialOperation(Promise.race([task, timeout]), signal);
   } finally {
     clearTimeout(timer);
   }
@@ -109,7 +143,7 @@ export async function selectLierdaPort(serial, { downloadOnly = false, chooseOth
     throw new LocalizedError('无法自动确认串口，请点击「选择其他串口」。');
   }
   if (downloadOnly) return serial.requestPort({ filters: [lierdaDownloadFilter] });
-  return serial.requestPort();
+  return serial.requestPort({ filters: [lierdaAtFilter, lierdaDownloadFilter] });
 }
 
 function newDownloadPorts(ports, previous) {
@@ -127,12 +161,14 @@ function atPortDisconnected(atPort, ports) {
   return typeof atPort.connected === 'boolean' ? !atPort.connected : !ports.includes(atPort);
 }
 
-export async function selectLierdaDownloadPort(serial, { atPort, previousPorts }) {
+export async function selectLierdaDownloadPort(serial, { atPort, previousPorts }, { forceChooser = false } = {}) {
   const previous = new Set(previousPorts.filter(isDownloadPort));
-  const ports = await serial.getPorts();
-  const candidates = newDownloadPorts(ports, previous);
-  if (candidates.length === 1 && atPortDisconnected(atPort, ports)
-      && previousDownloadPortsStillConnected(previous, ports)) return candidates[0];
+  if (!forceChooser) {
+    const ports = await serial.getPorts();
+    const candidates = newDownloadPorts(ports, previous);
+    if (candidates.length === 1 && atPortDisconnected(atPort, ports)
+        && previousDownloadPortsStillConnected(previous, ports)) return candidates[0];
+  }
 
   const selected = await serial.requestPort({ filters: [lierdaDownloadFilter] });
   if (!isDownloadPort(selected) || selected.connected === false) {
@@ -155,7 +191,7 @@ function atReplies(reader, signal) {
     pending ??= reader.read();
     // Reuse a read after a timeout, including when it completes while the
     // subsequent AT write is pending. Otherwise its reply would be lost.
-    const result = await withTimeout(pending, deadline - performance.now(), '等待 AT 应答超时。');
+    const result = await withTimeout(pending, deadline - performance.now(), '等待 AT 应答超时。', signal);
     pending = undefined;
     signal?.throwIfAborted();
     if (result.done) throw new AtPortClosed('AT 串口已断开。');
@@ -202,11 +238,11 @@ async function withLierdaAtPort(port, signal, usePort) {
     const opening = port.open({ baudRate: AT_BAUD, dataBits: 8, stopBits: 1,
       parity: 'none', flowControl: 'none' });
     try {
-      await withTimeout(opening, WRITE_TIMEOUT_MS, '打开 AT 串口超时。');
+      await withTimeout(opening, WRITE_TIMEOUT_MS, '打开 AT 串口超时。', signal);
       opened = true;
     } catch (error) {
       // Release even if an OS-level open completes after our deadline.
-      if (error instanceof SerialTimeout) opening.then(() => port.close()).catch(() => {});
+      if (error instanceof SerialTimeout || signal?.aborted) opening.then(() => port.close()).catch(() => {});
       throw error;
     }
     signal?.throwIfAborted();
@@ -217,10 +253,11 @@ async function withLierdaAtPort(port, signal, usePort) {
     signal?.throwIfAborted();
     return await usePort(writer, replies);
   } finally {
+    if (writer && signal?.aborted) writer.abort(signal.reason).catch(() => {});
     writer?.releaseLock();
     if (reader) {
       try {
-        await withTimeout(reader.cancel(), SERIAL_TIMEOUT_MS, '关闭 AT 读取流超时。');
+        await withTimeout(reader.cancel(), SERIAL_TIMEOUT_MS, '关闭 AT 读取流超时。', signal);
       } catch {
         // A device reset can already have errored the stream.
       } finally {
@@ -229,7 +266,7 @@ async function withLierdaAtPort(port, signal, usePort) {
     }
     if (opened && (port.readable || port.writable)) {
       try {
-        await withTimeout(port.close(), SERIAL_TIMEOUT_MS, '关闭 AT 串口超时。');
+        await withTimeout(port.close(), SERIAL_TIMEOUT_MS, '关闭 AT 串口超时。', signal);
       } catch (error) {
         if (port.connected !== false && (port.readable || port.writable)) throw error;
       }
@@ -237,16 +274,15 @@ async function withLierdaAtPort(port, signal, usePort) {
   }
 }
 
-async function probeLierdaIdentity(writer, replies, timeoutMs = AT_REPLY_MS) {
+async function probeLierdaIdentity(writer, replies, timeoutMs = AT_REPLY_MS, signal) {
   let vendor = false;
-  let model = false;
-  await withTimeout(writer.write(atIdentity), WRITE_TIMEOUT_MS, '发送 ATI 校验命令超时。');
+  await withTimeout(writer.write(atIdentity), WRITE_TIMEOUT_MS, '发送 ATI 校验命令超时。', signal);
   try {
     const acknowledged = await replies.readResult(timeoutMs, (line) => {
-      if (line === 'Lierda') vendor = true;
-      if (line === 'NT26F6D0' || line === 'NT26F9D0') model = true;
+      // Factory firmware can put the manufacturer, base and revision on one line.
+      if (line === 'Lierda' || /^Lierda,[ \t]+([A-Z0-9_]+)[ \t]+\1_V[0-9]+$/u.test(line)) vendor = true;
     });
-    return acknowledged && vendor && model;
+    return acknowledged && vendor;
   } catch (error) {
     if (!(error instanceof SerialTimeout)) throw error;
     return false;
@@ -258,20 +294,24 @@ function identifyLierdaAtPort(port) {
 }
 
 /** Verify the Lierda AT interface, then send the download reboot once. */
-export async function requestLierdaDownloadMode(port, { signal, log = () => {}, timeoutMs = AT_REPLY_MS } = {}) {
+export async function requestLierdaDownloadMode(port, {
+  signal, log = () => {}, timeoutMs = AT_REPLY_MS, onDownloadRequested, onDownloadSent, onDownloadRejected,
+} = {}) {
   return withLierdaAtPort(port, signal, async (writer, replies) => {
-    await withTimeout(writer.write(atProbe), WRITE_TIMEOUT_MS, '发送 AT 校验命令超时。');
+    await withTimeout(writer.write(atProbe), WRITE_TIMEOUT_MS, '发送 AT 校验命令超时。', signal);
     if (!await replies.readResult(timeoutMs)) throw new LocalizedError('AT 校验失败，请选择 Lierda At Port。');
     log(t('AT 串口校验通过。'));
     replies.clear();
     signal?.throwIfAborted();
-    if (!await probeLierdaIdentity(writer, replies, timeoutMs)) {
-      throw new LocalizedError('无法确认利尔达 NT26F6D0 或 NT26F9D0 型号。可手动进入下载模式并选择 QDLoader。');
+    if (!await probeLierdaIdentity(writer, replies, timeoutMs, signal)) {
+      throw new LocalizedError('ATI 未确认串口厂商为利尔达。请选择 Mobile AT Interface，或手动进入下载模式后选择 QDLoader。');
     }
     replies.clear();
     signal?.throwIfAborted();
-    await withTimeout(writer.write(atDownload), WRITE_TIMEOUT_MS, '发出下载复位命令未得到确认。');
+    onDownloadRequested?.();
+    await withTimeout(writer.write(atDownload), WRITE_TIMEOUT_MS, '发出下载复位命令未得到确认。', signal);
     log(t('已发送一次下载复位命令，等待 QDLoader。'));
+    onDownloadSent?.();
 
     let acknowledged;
     try {
@@ -283,7 +323,10 @@ export async function requestLierdaDownloadMode(port, { signal, log = () => {}, 
           && port.connected !== false && port.readable && error.name !== 'NetworkError') throw error;
       return { acknowledged: false };
     }
-    if (!acknowledged) throw new LocalizedError('设备拒绝进入下载模式。');
+    if (!acknowledged) {
+      onDownloadRejected?.();
+      throw new LocalizedError('设备拒绝进入下载模式。');
+    }
     return { acknowledged: true };
   });
 }
@@ -298,7 +341,7 @@ export async function waitForLierdaDownloadPort(serial, {
     signal?.throwIfAborted();
     let ports;
     try {
-      ports = await withTimeout(serial.getPorts(), deadline - performance.now(), '等待 QDLoader 超时。');
+      ports = await withTimeout(serial.getPorts(), deadline - performance.now(), '等待 QDLoader 超时。', signal);
     } catch (error) {
       if (error instanceof SerialTimeout) break;
       throw error;
@@ -312,6 +355,36 @@ export async function waitForLierdaDownloadPort(serial, {
   }
   signal?.throwIfAborted();
   return null;
+}
+
+export async function chooseLierdaDownloadPort(serial, transition, { signal, offerManualChoice, pollAfter }) {
+  const automatic = new AbortController();
+  const automaticSignal = signal ? AbortSignal.any([signal, automatic.signal]) : automatic.signal;
+  const choice = deferredSerialResult();
+  let choosing = false;
+  let finished = false;
+  async function discover() {
+    if (pollAfter) await waitForSerialOperation(pollAfter, automaticSignal);
+    return waitForLierdaDownloadPort(serial, { ...transition, signal: automaticSignal });
+  }
+  try {
+    signal?.throwIfAborted();
+    offerManualChoice(() => {
+      if (finished || choosing || signal?.aborted) return;
+      choosing = true;
+      // Invoke the browser chooser in the user's click, before awaiting serial enumeration.
+      selectLierdaDownloadPort(serial, transition, { forceChooser: true }).then(choice.resolve, choice.reject);
+      automatic.abort();
+    });
+    discover().then(
+      port => { if (!choosing) choice.resolve(port); },
+      error => { if (!choosing) choice.reject(error); },
+    );
+    return await waitForSerialOperation(choice.promise, signal);
+  } finally {
+    finished = true;
+    automatic.abort();
+  }
 }
 
 function bytesHex(bytes, separator = "") {
@@ -356,21 +429,34 @@ function crc32(bytes, ...chunks) {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function serialIO(reader, writer) {
+function serialIO(reader, writer, baudrate, connectSignal) {
   let buffered = EMPTY;
   let pendingRead;
+  let transmitUntil = 0;
+  // 8N1 uses ten wire bits per byte. Slower ports may also acknowledge a
+  // Web Serial write while its bytes are still queued by the driver.
+  const wireTime = (bytes) => baudrate < USB_BAUD ? Math.ceil(bytes * 10_000 / baudrate) : 0;
 
   return {
+    finishConnection() {
+      // A connection cancellation must never affect a later Flash write.
+      connectSignal = undefined;
+    },
+
     discardBufferedInput() {
       buffered = EMPTY;
     },
 
     async write(bytes) {
-      await withTimeout(writer.write(bytes), WRITE_TIMEOUT_MS, 'Web Serial 发送超时');
+      connectSignal?.throwIfAborted();
+      const transmitMs = wireTime(bytes.length);
+      transmitUntil = Math.max(performance.now(), transmitUntil) + transmitMs;
+      await withTimeout(writer.write(bytes), WRITE_TIMEOUT_MS + transmitMs, 'Web Serial 发送超时', connectSignal);
     },
 
     async readExactly(length) {
-      const deadline = performance.now() + SERIAL_TIMEOUT_MS;
+      connectSignal?.throwIfAborted();
+      const deadline = Math.max(performance.now(), transmitUntil) + SERIAL_TIMEOUT_MS + wireTime(length);
       while (buffered.length < length) {
         // Keep the same pending read if only the deadline expires. An abandoned
         // read would consume the next response ahead of a new read request.
@@ -378,7 +464,7 @@ function serialIO(reader, writer) {
         const { value, done } = await withTimeout(
           pendingRead,
           deadline - performance.now(),
-          'Web Serial 接收超时'
+          'Web Serial 接收超时', connectSignal
         );
         pendingRead = undefined;
         if (done) {
@@ -391,6 +477,7 @@ function serialIO(reader, writer) {
       }
       const result = buffered.subarray(0, length);
       buffered = buffered.subarray(length);
+      transmitUntil = 0;
       return result;
     },
   };
@@ -503,7 +590,13 @@ async function imageInfo(io, imageId, label, log, agent = false) {
   const options = { agent };
   const version = await sendCommand(io, ROM_COMMANDS.version, EMPTY, options);
   if (!agent) {
-    if (!bytesHex(version).startsWith(EC718PM_ROM_PREFIX)) {
+    // The ROM returns its eight-byte ID least-significant byte first, followed
+    // by optional build information. Vendor profiles use most-significant byte first.
+    const romId = bytesHex(version.slice(0, 8).reverse());
+    if (ADDITIONAL_VENDOR_ROM_IDS.has(romId)) {
+      throw new LocalizedError(localizedMessage('已识别移芯 ROM @0。当前网页 AgentBoot 尚未在此版本上验证，请使用配套的 FlashToolCLI。', romId));
+    }
+    if (romId !== VERIFIED_USB_ROM_ID) {
       throw new LocalizedError(localizedMessage('下载口 ROM 与已验证的利尔达移芯版本不匹配 · @0', bytesHex(version, " ")));
     }
     log(t('DLBOOT @0 · ROM 版本 @1', label, bytesHex(version, " ")));
@@ -554,34 +647,35 @@ async function imageHeader(length, digest, { id, address, baud, controls }) {
   return header;
 }
 
-// The caller opens the QDLoader port at USB_BAUD and asserts DTR first.
-async function connectAgent(port, agentBytes, log) {
+// The caller opens the QDLoader port at the selected baud rate and asserts DTR first.
+async function connectAgent(port, agentBytes, log, baudrate = USB_BAUD, signal) {
   const info = port.getInfo();
   if (info.usbVendorId !== DOWNLOAD_VENDOR || info.usbProductId !== DOWNLOAD_PRODUCT) {
     throw new LocalizedError('请选择 USB 下载口 17D1:0001');
   }
-  if (!(agentBytes instanceof Uint8Array) || agentBytes.length !== AGENT_BYTE_LENGTH) {
-    throw new LocalizedError(localizedMessage('AgentBoot 文件长度不匹配，应为 @0 字节', AGENT_BYTE_LENGTH));
-  }
   // The hash applies to the same snapshot sent to the chip.
-  const agent = new Uint8Array(agentBytes);
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', agent));
-  if (bytesHex(digest) !== AGENT_DIGEST) {
-    throw new LocalizedError('AgentBoot SHA-256 与已验证的 USB 镜像不一致');
-  }
+  signal?.throwIfAborted();
+  const agent = agentBytes instanceof Uint8Array ? new Uint8Array(agentBytes) : undefined;
+  const digest = await verifyLierdaAgentBoot(agent);
   const header = await imageHeader(agent.length, digest, {
-    id: AGENT_IMAGE, address: 0, baud: USB_BAUD, controls: 1,
+    id: AGENT_IMAGE, address: 0, baud: baudrate, controls: 1,
   });
+  signal?.throwIfAborted();
   if (!port.readable || !port.writable) throw new LocalizedError('未打开 QDLoader 串口');
   const reader = port.readable.getReader();
   let writer;
   let closed = false;
-  const close = async () => {
+  const close = async (abortReason) => {
     if (closed) return;
     closed = true;
-    if (writer) writer.releaseLock();
+    if (writer) {
+      if (abortReason !== undefined) writer.abort(abortReason).catch(() => {});
+      writer.releaseLock();
+    }
     try {
-      await withTimeout(reader.cancel(), SERIAL_TIMEOUT_MS, '关闭 Web Serial 读取流超时');
+      const cancelling = reader.cancel(abortReason);
+      if (abortReason !== undefined) cancelling.catch(() => {});
+      else await withTimeout(cancelling, SERIAL_TIMEOUT_MS, '关闭 Web Serial 读取流超时');
     } catch {
       // A physical disconnect can already have errored the read stream.
     } finally {
@@ -590,7 +684,7 @@ async function connectAgent(port, agentBytes, log) {
   };
   try {
     writer = port.writable.getWriter();
-    const io = serialIO(reader, writer);
+    const io = serialIO(reader, writer, baudrate, signal);
     const reply = await synchronize(io, ROM_SYNC, "DLBOOT");
     log(t('DLBOOT 同步通过 · RX @0', reply.toUpperCase()));
     await imageInfo(io, HEAD_IMAGE, "HEAD", log);
@@ -602,8 +696,8 @@ async function connectAgent(port, agentBytes, log) {
     log(t('USB AgentBoot 已载入 RAM，LPC 就绪。'));
     return { io, close };
   } catch (error) {
-    await close();
-    throw error;
+    await close(signal?.reason);
+    throw signal?.reason ?? error;
   }
 }
 

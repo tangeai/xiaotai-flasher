@@ -27,7 +27,8 @@ test('an empty or pre-Lierda catalog does not enable a built-in online firmware'
   for (const hardware of lierdaBoards) {
     const [board] = publishedBoards({ boards: [entry(hardware, [])] }, catalogURL);
     assert.deepEqual(board.versions, []);
-    assert.throws(() => prepareLierdaFirmware({ model: hardware.model, origin: 'official' }), /暂无可选/);
+    assert.throws(() => prepareLierdaFirmware({ model: hardware.model, origin: 'official' }),
+      hardware.flashUnavailable ? { message: hardware.flashUnavailable } : /暂无可选/);
   }
 });
 
@@ -65,10 +66,10 @@ test('rejects local files that change size during a read and aborted selections'
 });
 
 for (const hardware of lierdaBoards) {
-  test(`${hardware.name} loads its selected original filename and verifies the shared catalog binary`, async (t) => {
+  test(`${hardware.name} resolves the selected catalog version and its board-specific filename`, async (t) => {
     const bytes = Uint8Array.of(0x42, 0x49, 0x4e);
     const hash = Buffer.from(await crypto.subtle.digest('SHA-256', bytes)).toString('hex');
-    const product = hardware.slug.slice('lierda-'.length);
+    const product = hardware.firmwareKey;
     const older = packageRelease(product, hash);
     const latest = { ...packageRelease(product, '1'.repeat(64), '1.0.1'), recommended: true };
     const calls = [];
@@ -84,18 +85,30 @@ for (const hardware of lierdaBoards) {
     assert.equal(board.model, hardware.name);
     assert.equal(board.versions[0].recommended, true);
     const selectedRelease = board.versions.find((release) => release.version === older.version);
+    const expectedFilename = `v${older.version}-${hardware.slug}.binpkg`;
+    assert.equal(selectedRelease.filename, expectedFilename);
+    assert.equal(selectedRelease.source_filename, older.source_filename);
+    if (hardware.flashUnavailable) {
+      for (const origin of ['official', 'local']) {
+        assert.throws(() => prepareLierdaFirmware({ model: hardware.model, origin, selectedRelease }),
+          { message: hardware.flashUnavailable });
+      }
+      assert.equal(calls.length, 2);
+      return;
+    }
     const selected = prepareLierdaFirmware({ model: hardware.model, origin: 'official', selectedRelease }, hardware.flashBytes);
     assert.equal(selected.boardModel, hardware.name);
-    assert.equal(selected.filename, older.source_filename);
+    assert.equal(selected.filename, expectedFilename);
     assert.deepEqual(await resolveLierdaFirmware(selected), {
-      bytes, model: hardware.model, stage: 'app', filename: older.source_filename, sha256: hash,
+      bytes, model: hardware.model, stage: 'app', filename: expectedFilename, sha256: hash,
     });
     assert.deepEqual(calls, [base + 'boards-source.json', catalogURL, new URL(older.bin_url, catalogURL).href]);
   });
 }
 
 test('malformed or conflicting BINPKG records leave other platforms available', () => {
-  const [lite, pro] = lierdaBoards;
+  const lite = lierdaBoards.find(board => board.model === 'lite');
+  const pro = lierdaBoards.find(board => board.model === 'pro-f9');
   const valid = packageRelease('pro');
   const stock = { slug: 'stock', model: 'Stock', chip: 'ESP32', releases: [{
     version: '1', status: 'published', sha256: 'f'.repeat(64), bin_url: './legacy.bin',
@@ -119,7 +132,8 @@ test('malformed or conflicting BINPKG records leave other platforms available', 
 });
 
 test('only published BINPKGs appear and Pro excludes prereleases', () => {
-  const [lite, pro] = lierdaBoards;
+  const lite = lierdaBoards.find(board => board.model === 'lite');
+  const pro = lierdaBoards.find(board => board.model === 'pro-f9');
   const records = (product) => [
     { ...packageRelease(product, 'b'.repeat(64), '2.0.0'), prerelease: true },
     { ...packageRelease(product, 'c'.repeat(64), '3.0.0'), status: 'draft' },
@@ -130,4 +144,18 @@ test('only published BINPKGs appear and Pro excludes prereleases', () => {
   assert.equal(voice.versions[0].prerelease, true);
   assert.equal(voice.versions[1].recommended, true);
   assert.deepEqual(video.versions.map((release) => release.version), ['1.0.0']);
+});
+
+test('legacy catalogs resolve Lite to PM Lite and the old Pro slug to HM Pro', () => {
+  for (const [oldSlug, key, newSlug] of [
+    ['lierda-lite', 'lite', 'lierda-ec718pm-lite'],
+    ['lierda-pro', 'pro', 'lierda-ec718hm-pro'],
+  ]) {
+    const hardware = lierdaBoards.find(board => board.slug === newSlug);
+    const row = { ...entry(hardware, [packageRelease(key)]), slug: oldSlug };
+    const [actual] = publishedBoards({ boards: [row] }, catalogURL);
+    assert.equal(actual.slug, newSlug);
+    assert.equal(actual.versions[0].filename, `v1.0.0-${newSlug}.binpkg`);
+    assert.deepEqual(publishedBoards({ boards: [row, { ...row, slug: newSlug }] }, catalogURL), []);
+  }
 });

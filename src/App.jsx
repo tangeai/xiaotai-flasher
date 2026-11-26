@@ -6,20 +6,22 @@ import brandMark from './assets/xiaotai-brand-mark.png';
 import { canonicalBoardSlug, loadBoards } from './catalog.mjs';
 import { prepareFirmware } from './firmware.mjs';
 import { lierdaBoards, prepareLierdaFirmware } from './lierda-firmware.mjs';
+import { lierdaBoardForLink } from './lierda-boards.mjs';
+import { getLierdaFlashPlan } from './lierda-package.mjs';
 import {
   initialLierdaSelection,
-  lierdaBoardForLink,
   LierdaFirmwarePicker,
   LierdaFlashSummary,
   matchesLierdaDevice,
   useLierdaPreflight,
 } from './lierda-ui.jsx';
-import { bkSettingFields, settingFields } from './settings.mjs';
+import { parseLierdaBaudrate, USB_BAUD } from './lierda-serial.mjs';
+import { bkSettingFields, lierdaManualEntryHelp, lierdaSettingFields, lierdaWriteRates, settingFields } from './settings.mjs';
 import { useWorkbench } from './useWorkbench.js';
 
 const logRates = ['115200', '9600', '57600', '230400', '460800', '921600'];
 const defaultSettings = Object.fromEntries(
-  [...settingFields, ...bkSettingFields].map(([key, , options]) => [key, options[0][0]]),
+  [...settingFields, ...bkSettingFields, ...lierdaSettingFields].map(([key, , options]) => [key, options[0][0]]),
 );
 const recommendedVersion = (board) =>
   board?.versions.find((version) => version.recommended)?.version ??
@@ -44,14 +46,55 @@ function Check({ children, help, ...props }) {
   );
 }
 
-function FlashOptions({ settings, change, disabled, official, connected, bk }) {
-  const fields = bk
-    ? [...bkSettingFields, ...settingFields.filter(([key]) => key === 'after-reset')]
-    : settingFields;
+function FlashOptions({ settings, change, disabled, official, connected, bk, lierda, invalidLierdaBaudrate }) {
+  const fields = lierda
+    ? lierdaSettingFields
+    : bk
+      ? [...bkSettingFields, ...settingFields.filter(([key]) => key === 'after-reset')]
+      : settingFields;
   return (
     <details className="settings-group" id="advanced">
       <summary>{t('高级设置')}</summary>
       <div className="options">
+        {lierda && (
+          <>
+            <label className="field">
+              {t('烧录波特率')}
+              <select
+                id="lierda-write-rate"
+                value={settings['lierda-write-rate']}
+                disabled={disabled || connected}
+                onChange={(event) => change('lierda-write-rate', event.target.value)}
+              >
+                {lierdaWriteRates.map((rate) => (
+                  <option key={rate} value={rate}>{rate}</option>
+                ))}
+                <option value="custom">{t('自定义')}</option>
+              </select>
+              <small>{t('连接 QDLoader 时使用所选速率，可用速率取决于设备和驱动。运行态 AT 口使用 115200。')}</small>
+            </label>
+            {settings['lierda-write-rate'] === 'custom' && (
+              <label className="field">
+                {t('自定义波特率')}
+                <input
+                  id="lierda-custom-baud"
+                  type="text"
+                  inputMode="numeric"
+                  value={settings['lierda-custom-baud']}
+                  disabled={disabled || connected}
+                  aria-invalid={invalidLierdaBaudrate}
+                  aria-describedby={invalidLierdaBaudrate ? 'lierda-baud-error' : undefined}
+                  onChange={(event) => change('lierda-custom-baud', event.target.value)}
+                />
+                {invalidLierdaBaudrate && (
+                  <small id="lierda-baud-error" className="error">
+                    {t('请输入 100 至 3276700 之间、且为 100 整数倍的 QDLoader 波特率。')}
+                  </small>
+                )}
+              </label>
+            )}
+          </>
+        )}
         {fields.map(([key, label, options, help]) => (
           <label className="field" key={key}>
             {t(label)}
@@ -62,7 +105,7 @@ function FlashOptions({ settings, change, disabled, official, connected, bk }) {
               disabled={
                 disabled ||
                 (official && key === 'expected-chip') ||
-                (connected && ['before-reset', 'write-rate', 'bk-before-reset'].includes(key))
+                (connected && ['before-reset', 'write-rate', 'bk-before-reset', 'lierda-before-reset'].includes(key))
               }
             >
               {options.map(([value, title]) => (
@@ -71,14 +114,14 @@ function FlashOptions({ settings, change, disabled, official, connected, bk }) {
                 </option>
               ))}
             </select>
-            <small>{t(help)}</small>
+            <small>{t(key === 'lierda-before-reset' && settings[key] === 'manual' ? lierdaManualEntryHelp : help)}</small>
           </label>
         ))}
         {bk ? (
           <small className="span">
             {t('板端下载接口为 DL_UART0。日志波特率可在串口日志面板单独设置。')}
           </small>
-        ) : (
+        ) : !lierda && (
           <>
             <Check
               checked={settings.compress}
@@ -877,6 +920,7 @@ export function App() {
   const lierda = platform === 'lierda';
   const lierdaBoard = lierdaBoards.find(({ model }) => model === lierdaSelection.model);
   const onlineBoard = catalog.boards.find(({ slug }) => slug === lierdaBoard.slug);
+  const lierdaBoardName = onlineBoard?.model ?? lierdaBoard.name;
   const lierdaReleases = catalog.loading ? undefined : catalog.unavailable ? null : onlineBoard?.versions ?? [];
   const lierdaRelease = lierdaReleases?.find(({ version }) => version === lierdaSelection.versions[lierdaBoard.model])
     ?? lierdaReleases?.find(({ recommended }) => recommended)
@@ -890,10 +934,15 @@ export function App() {
   }));
   const [settings, setSettings] = useState({
     ...defaultSettings,
+    'lierda-write-rate': String(USB_BAUD),
+    'lierda-custom-baud': '',
     compress: true,
     eraseAll: false,
     autoLog: true,
   });
+  const lierdaBaudrate = parseLierdaBaudrate(settings['lierda-write-rate'] === 'custom'
+    ? settings['lierda-custom-baud'] : settings['lierda-write-rate']);
+  const invalidLierdaBaudrate = lierda && lierdaBaudrate === null;
   const [rate, setRate] = useState(logRates[0]);
   const [pending, setPending] = useState(null);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -909,16 +958,16 @@ export function App() {
     deviceError,
     canReconnect,
     needsLierdaDownloadPort,
+    lierdaConnecting,
     flashBackup,
     progress,
     complete,
     serialAvailable,
   } = workbench;
-  const detectedLierdaBoard = lierdaBoards.find(({ model }) => model === device?.lierdaModel);
+  const detectedLierdaBoard = lierdaBoards.find((board) => matchesLierdaDevice(board, device));
   const localPackage = lierdaSelection.origin === 'local';
-  const targetBoard = localPackage ? detectedLierdaBoard : lierdaBoard;
-  const targetSelection = { ...lierdaSelection, model: targetBoard?.model };
-  const lierdaPreflight = useLierdaPreflight(targetSelection, lierda && Boolean(targetBoard));
+  const lierdaPreflight = useLierdaPreflight(lierdaSelection, lierda && !lierdaBoard.flashUnavailable,
+    detectedLierdaBoard === lierdaBoard ? lierdaRelease : null);
   const pendingLierdaMismatch = pending?.kind === 'lierda' &&
     (pending.targetDevice !== device || !matchesLierdaDevice(pending, device));
 
@@ -966,13 +1015,14 @@ export function App() {
   useEffect(() => {
     if (!detectedLierdaBoard) return;
     setLierdaChoice((current) => {
-      if (current.modelChosen || current.model === detectedLierdaBoard.model) return current;
+      if (current.model === detectedLierdaBoard.model) return current;
       return {
         ...current,
         model: detectedLierdaBoard.model,
+        file: null,
       };
     });
-  }, [detectedLierdaBoard]);
+  }, [device, detectedLierdaBoard]);
 
   useEffect(() => {
     const changed = () => setFullscreen(Boolean(document.fullscreenElement));
@@ -1000,7 +1050,6 @@ export function App() {
     setLierdaChoice((current) => ({
       ...current,
       model,
-      modelChosen: true,
       file: null,
     }));
   }
@@ -1046,28 +1095,31 @@ export function App() {
   if (!serialAvailable)
     readinessMessage = t('请在桌面 Chrome 或 Edge 中打开 HTTPS 烧录页。');
   else if (lierda) {
-    if (!device) {
-      readinessMessage = localPackage ? t('连接设备后将自动识别板型并校验固件包。') : t('先连接设备，再选择固件。');
-    } else if (!targetBoard || !matchesLierdaDevice(targetBoard, device)) {
+    if (lierdaBoard.flashUnavailable) {
+      readinessMessage = t(lierdaBoard.flashUnavailable);
+    } else if (device?.lierdaCompatibilityIssue) {
+      readinessMessage = t(device.lierdaCompatibilityIssue);
+    } else if (device && detectedLierdaBoard !== lierdaBoard) {
       readinessMessage = detectedLierdaBoard && detectedLierdaBoard !== lierdaBoard
         ? t('已连接 @0，请选择对应板型。', t(detectedLierdaBoard.name))
         : t('设备芯片或 Flash 容量与所选板型不匹配。');
+    } else if (lierdaPreflight.status === 'checking') {
+      readinessMessage = t('正在校验固件…');
+    } else if (lierdaPreflight.status === 'invalid') {
+      readinessMessage = t(lierdaPreflight.error);
+    } else if (!device) {
+      readinessMessage = localPackage && lierdaSelection.file
+        ? t('固件包已通过校验。连接设备后将核对板型和底包。')
+        : t('先连接设备，再选择固件。');
     } else {
       try {
         const firmware = prepareLierdaFirmware(
-          { ...targetSelection, selectedRelease: lierdaRelease },
+          { ...lierdaSelection, selectedRelease: lierdaRelease },
           device.capacity,
         );
-        if (lierdaPreflight === 'checking') {
-          readinessMessage = t('正在校验固件…');
-        } else if (lierdaPreflight === 'invalid') {
-          readinessMessage = firmware.model === 'pro-f9'
-            ? t('固件与 NT26F9D0（F9D_D）不匹配。')
-            : t('固件与利尔达 Lite 不匹配。');
-        } else {
-          ready = { ...firmware, targetDevice: device };
-          readinessMessage = t('固件已就绪。');
-        }
+        const writePlan = getLierdaFlashPlan(device.lierdaProfile, lierdaPreflight.profile);
+        ready = { ...firmware, boardModel: lierdaBoardName, targetDevice: device, writePlan, input: lierdaPreflight.input };
+        readinessMessage = t('固件已就绪。');
       } catch (error) {
         readinessMessage = error.message;
       }
@@ -1111,7 +1163,7 @@ export function App() {
     if (!confirm || !firmware) return;
     if (firmware.kind === 'lierda') {
       if (pendingLierdaMismatch) return;
-      workbench.write(firmware, { restart: true, autoLog: false, logRate: rate });
+      workbench.write(firmware, { restart: settings['lierda-after-reset'] === 'reset' });
       return;
     }
     workbench.write(firmware, {
@@ -1132,10 +1184,11 @@ export function App() {
   function connectDevice(reusePort = false, chooseOther = false) {
     userSelected.current = true;
     if (lierda) {
+      if (invalidLierdaBaudrate) return;
       workbench.connect({
         platform,
-        baudrate: 921600,
-        lierdaModel: lierdaSelection.model,
+        baudrate: lierdaBaudrate,
+        downloadOnly: settings['lierda-before-reset'] === 'manual',
       }, reusePort, chooseOther);
       return;
     }
@@ -1164,6 +1217,7 @@ export function App() {
 
   const completed = progress?.outcome === 'success';
   const showResetHint = bk && !device && !busy && !completed;
+  const manualLierda = lierda && settings['lierda-before-reset'] === 'manual';
   const selectLierdaDownload = lierda && needsLierdaDownloadPort;
   return (
     <>
@@ -1262,22 +1316,34 @@ export function App() {
             >
               {t('断开连接')}
             </button>
+          ) : lierdaConnecting ? (
+            <>
+              {selectLierdaDownload && (
+                <button className="btn primary" type="button" aria-describedby="lierda-port-hint"
+                  onClick={workbench.chooseLierdaDownloadPort}>
+                  {t('选择下载口')}
+                </button>
+              )}
+              <button className="btn" type="button" onClick={workbench.cancelLierdaConnection}>
+                {t('取消连接')}
+              </button>
+            </>
           ) : (
             <>
               <button
                 className="btn primary"
                 type="button"
-                disabled={busy || !serialAvailable}
+                disabled={busy || !serialAvailable || invalidLierdaBaudrate}
                 aria-describedby={showResetHint ? 'bk-reset-hint' : lierda && !busy ? 'lierda-port-hint' : undefined}
                 onClick={() => connectDevice(!selectLierdaDownload && canReconnect)}
               >
                 {selectLierdaDownload ? t('选择下载口') : canReconnect ? t('重新连接') : t('连接设备')}
               </button>
-              {(canReconnect || (lierda && deviceError)) && !selectLierdaDownload && (
+              {(canReconnect || (lierda && (deviceError || selectLierdaDownload))) && (
                 <button
                   className="btn"
                   type="button"
-                  disabled={busy || !serialAvailable}
+                  disabled={busy || !serialAvailable || invalidLierdaBaudrate}
                   onClick={() => connectDevice(false, true)}
                 >
                   {t('选择其他串口')}
@@ -1290,11 +1356,15 @@ export function App() {
               {t('选择开发板对应的 USB 串口（如 USB Serial (COM…)）。看到「等待下载握手」时按一下')} <kbd>RESET</kbd>{t('。已自动连接可跳过。')}
             </p>
           )}
-          {lierda && !device && !busy && (
+          {lierda && !device && (!busy || selectLierdaDownload) && (
             <p id="lierda-port-hint" className="reset-hint">
-              {selectLierdaDownload
-                ? t('请在 Chrome 中选择 Lierda QDLoader Port。')
-                : t('优先连接已授权的利尔达串口。弹窗中请选择 Mobile AT Interface 或 QDLoader。')}
+              {invalidLierdaBaudrate
+                ? t('请在高级设置中输入有效的自定义波特率。')
+                : selectLierdaDownload
+                  ? t('请在浏览器串口列表中选择 Lierda QDLoader Port。')
+                  : manualLierda
+                    ? t(lierdaManualEntryHelp)
+                    : t('点击「连接设备」自动进入下载模式。若弹出串口窗口，运行中的设备请选择 Mobile AT Interface，已进入下载模式的请选择 QDLoader。')}
             </p>
           )}
         </section>
@@ -1304,6 +1374,7 @@ export function App() {
               {lierda ? (
                 <LierdaFirmwarePicker
                   board={lierdaBoard}
+                  boardName={lierdaBoardName}
                   releases={lierdaReleases}
                   release={lierdaRelease}
                   selection={lierdaSelection}
@@ -1312,30 +1383,31 @@ export function App() {
                   busy={busy}
                 />
               ) : (
-                <>
-                  <FirmwarePicker
-                    key={platform}
-                    catalog={{ ...catalog, boards: platformBoards }}
-                    origin={origin}
-                    choose={(value) => {
-                      userSelected.current = true;
-                      setOrigin(value);
-                    }}
-                    selection={selected}
-                    change={changeSelection}
-                    busy={busy}
-                    bk={bk}
-                  />
-                  <FlashOptions
-                    settings={settings}
-                    change={changeSetting}
-                    disabled={busy}
-                    official={origin === 'official'}
-                    connected={Boolean(device)}
-                    bk={bk}
-                  />
-                </>
+                <FirmwarePicker
+                  key={platform}
+                  catalog={{ ...catalog, boards: platformBoards }}
+                  origin={origin}
+                  choose={(value) => {
+                    userSelected.current = true;
+                    setOrigin(value);
+                  }}
+                  selection={selected}
+                  change={changeSelection}
+                  busy={busy}
+                  bk={bk}
+                />
               )}
+              <FlashOptions
+                key={lierda ? 'lierda' : 'other'}
+                settings={settings}
+                change={changeSetting}
+                disabled={busy}
+                official={origin === 'official'}
+                connected={Boolean(device)}
+                bk={bk}
+                lierda={lierda}
+                invalidLierdaBaudrate={invalidLierdaBaudrate}
+              />
               {lierda && flashBackup && (
                 <button className="btn actions" type="button" disabled={busy} onClick={workbench.downloadFlashBackup}>
                   {t('下载烧录前备份')}
@@ -1374,12 +1446,12 @@ export function App() {
                   id="start"
                   type="button"
                   aria-describedby="start-hint"
-                  disabled={busy || !ready}
-                  onClick={() => setPending(ready)}
+                  disabled={busy || (!ready && !lierdaPreflight.retry)}
+                  onClick={lierdaPreflight.retry ?? (() => setPending(ready))}
                 >
                   {busy && progress?.outcome === 'writing'
                     ? t('烧录中…')
-                    : t('开始烧录')}
+                    : lierdaPreflight.retry ? t('重试下载') : t('开始烧录')}
                 </button>
               </div>
               {!lierda && (
@@ -1444,7 +1516,7 @@ export function App() {
             value="flash"
             disabled={!device || pendingLierdaMismatch}
           >
-            {t('确认写入')}
+            {pending?.writePlan?.mode === 'reinstall' ? t('清除数据并重装') : t('确认写入')}
           </button>
         </form>
       </dialog>

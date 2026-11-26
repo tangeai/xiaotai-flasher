@@ -9,8 +9,10 @@ import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 
 import { canonicalBoardSlug } from '../src/catalog.mjs';
+import { lierdaBoardForLink } from '../src/lierda-boards.mjs';
 import { chips } from '../src/chips.mjs';
 import { collectLierdaBoards } from './import-lierda.mjs';
+import curatedCatalog from '../boards.json' with { type: 'json' };
 
 const apiRoot = 'https://api.github.com/repos/';
 const espRepo = 'tangeai/xiaotai-esp32';
@@ -442,7 +444,57 @@ async function mirrorImage(image, destination, temporary) {
   }
 }
 
-async function collectBinBoards(firmware, temporary, includePrerelease) {
+function sameBin(left, right) {
+  return left.bin_url === right.bin_url && left.sha256 === right.sha256;
+}
+
+// Preserve local publication metadata for identical images. A BIN absent from
+// GitHub may survive only if both the curated catalog and this deployment list it.
+function preservePublishedBins(generated, previousBoards) {
+  const boards = new Map(generated.map(board => [board.slug, board]));
+  const published = [];
+  for (const previous of previousBoards) {
+    if (lierdaBoardForLink(previous.slug)) continue;
+    const curated = curatedCatalog.boards.find(board =>
+      board.slug === previous.slug && board.chip === previous.chip);
+    const current = boards.get(previous.slug);
+    if (current && current.chip !== previous.chip) continue;
+    const releases = current?.releases ?? [];
+    for (const old of previous.releases) {
+      if (!old || !digestPattern.test(old.sha256) || typeof old.bin_url !== 'string' ||
+          typeof old.version !== 'string' || !old.version || old.version.trim() !== old.version) continue;
+      const fresh = releases.find(release => sameBin(release, old));
+      const pinned = curated?.releases.find(release => sameBin(release, old));
+      if (fresh) {
+        if (old.status === 'offline' || old.status === 'draft') fresh.status = old.status;
+        if (pinned?.status === 'offline' || pinned?.status === 'draft') fresh.status = pinned.status;
+        // An upstream promotion or demotion must update the testing label.
+        if (old.version.endsWith('（测试版）') === fresh.version.endsWith('（测试版）') &&
+            !releases.some(release => release !== fresh && release.version === old.version)) {
+          fresh.version = old.version;
+        }
+        if (typeof old.embedded_version === 'string' && old.embedded_version) fresh.embedded_version = old.embedded_version;
+      } else if (old.status === 'published' && pinned?.status === 'published' &&
+          !releases.some(release => release.version === old.version || release.bin_url === old.bin_url)) {
+        releases.push({ ...old });
+      }
+    }
+    if (!releases.length) continue;
+    const board = current ?? { ...previous, releases };
+    if (curated?.model === previous.model) board.model = previous.model;
+    const selected = releases.find(release => release.status === 'published' && release.recommended) ??
+      releases.find(release => release.status === 'published');
+    for (const release of releases) {
+      if (release === selected) release.recommended = true;
+      else delete release.recommended;
+    }
+    published.push(board);
+    boards.delete(board.slug);
+  }
+  return [...published, ...boards.values()];
+}
+
+async function collectBinBoards(firmware, temporary, includePrerelease, previousBoards) {
   const [espReleases, archiveReleases] = await Promise.all([
     listReleases(espRepo, includePrerelease),
     listReleases(archiveRepo, includePrerelease),
@@ -463,7 +515,7 @@ async function collectBinBoards(firmware, temporary, includePrerelease) {
     const failed = results.find((result) => result.status === 'rejected');
     if (failed) throw failed.reason;
   }
-  return catalog.boards;
+  return preservePublishedBins(catalog.boards, previousBoards);
 }
 
 async function previousCatalog(path) {
@@ -477,7 +529,8 @@ async function previousCatalog(path) {
   try {
     const { boards } = JSON.parse(contents.replace(/^\uFEFF/u, ''));
     if (!Array.isArray(boards) || !boards.every(board =>
-      typeof board?.slug === 'string' && Array.isArray(board.releases))) {
+      typeof board?.slug === 'string' && Array.isArray(board.releases)) ||
+      new Set(boards.map(board => board.slug)).size !== boards.length) {
       throw new Error('缺少有效的板卡或版本列表。');
     }
     return boards;
@@ -496,10 +549,10 @@ export async function generateCatalog(output, includePrerelease = false) {
   const temporary = await mkdtemp(join(output, '.catalog-'));
   try {
     const [bin, lierda] = await Promise.allSettled([
-      collectBinBoards(firmware, temporary, includePrerelease),
+      collectBinBoards(firmware, temporary, includePrerelease, previousBoards),
       collectLierdaBoards(firmware, { includePrerelease, previousBoards }),
     ]);
-    const isLierda = ({ slug }) => slug === 'lierda-lite' || slug === 'lierda-pro';
+    const isLierda = ({ slug }) => Boolean(lierdaBoardForLink(slug));
     const binBoards = bin.status === 'fulfilled' ? bin.value : previousBoards.filter(board => !isLierda(board));
     const lierdaBoards = lierda.status === 'fulfilled' ? lierda.value.boards : previousBoards.filter(isLierda);
     if (bin.status === 'rejected') console.error('[ERROR] ESP32 / BK7258:', errorDetail(bin.reason));

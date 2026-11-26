@@ -4,10 +4,10 @@ import { createSerialPreview } from './serial-preview.mjs';
 import { createAtReplyReader, encodeSerialCommand } from './serial-command.mjs';
 import { startSerialRecording } from './serial-recording.mjs';
 import { downloadFirmware } from './catalog.mjs';
-import { resolveLierdaFirmware } from './lierda-firmware.mjs';
+import { loadLierdaAgentBoot } from './lierda-agentboot.mjs';
 import {
   isDownloadPort, selectLierdaPort, selectLierdaDownloadPort,
-  requestLierdaDownloadMode, waitForLierdaDownloadPort,
+  chooseLierdaDownloadPort, deferredSerialResult, requestLierdaDownloadMode, USB_BAUD, waitForSerialOperation,
 } from './lierda-serial.mjs';
 import { persistLierdaFlashBackup } from './lierda-workflow.mjs';
 import {
@@ -25,6 +25,7 @@ const initialState = {
   deviceError: false,
   canReconnect: false,
   needsLierdaDownloadPort: false,
+  lierdaConnecting: false,
   flashBackup: null,
   monitoring: false,
   monitorReceived: false,
@@ -47,6 +48,8 @@ export function useWorkbench() {
   const retryPort = useRef(null);
   const lierdaBackup = useRef(null);
   const pendingLierdaDownload = useRef(null);
+  const manualLierdaDownload = useRef(null);
+  const lierdaConnection = useRef(null);
   const monitor = useRef(null);
   const preview = useRef(null);
   if (!preview.current) preview.current = createSerialPreview(logLimit);
@@ -290,60 +293,106 @@ export function useWorkbench() {
   }
 
   function connectLierda(options, reusePort, chooseOther) {
+    if (busy.current || !serial) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    const { downloadOnly, baudrate = USB_BAUD } = options;
+    let openingDownloadPort = false;
     return run(async () => {
-      const handoff = pendingLierdaDownload.current;
+      const handoff = chooseOther ? null : pendingLierdaDownload.current;
       let port;
       if (handoff) {
         port = await selectLierdaDownloadPort(serial, handoff);
-      } else if (reusePort) {
+      } else if (reusePort && (!downloadOnly || isDownloadPort(retryPort.current))) {
         port = retryPort.current;
       } else {
         flashStatus('正在检查已授权的利尔达串口…');
-        port = await selectLierdaPort(serial, { chooseOther });
+        port = await selectLierdaPort(serial, { downloadOnly, chooseOther });
       }
       if (!port) throw new LocalizedError('请重新选择利尔达串口。');
-      retryPort.current = null;
+      if (downloadOnly && (!isDownloadPort(port) || port.connected === false)) {
+        throw new LocalizedError('请选择已连接的 Lierda QDLoader 下载口。');
+      }
+      lierdaConnection.current = controller;
+      update({ lierdaConnecting: true });
+      if (!handoff) update({ flashLog: '', progress: null, complete: false });
+      setTab('flash');
+      flashStatus('正在校验利尔达 USB AgentBoot…');
+      const agent = await loadLierdaAgentBoot(signal);
+      signal.throwIfAborted();
+      retryPort.current = isDownloadPort(port) ? port : null;
       pendingLierdaDownload.current = null;
       update({ canReconnect: false, needsLierdaDownloadPort: false });
       await releaseMonitor();
-      if (!handoff) update({ flashLog: '', progress: null, complete: false });
-      setTab('flash');
+      signal.throwIfAborted();
       if (!isDownloadPort(port)) {
         flashStatus('正在切换到利尔达下载模式…');
         const atPort = port;
-        const previousPorts = (await serial.getPorts()).filter((candidate) => candidate.connected !== false);
-        try {
-          await requestLierdaDownloadMode(atPort, { log: line => appendLog('flashLog', line + '\n') });
-        } catch (error) {
-          appendLog('flashLog', error.message + '\n');
-          throw new LocalizedError('未能切换下载模式。请选择 Lierda At Port 或 Mobile AT Interface。', { cause: error });
-        }
+        const ports = await waitForSerialOperation(serial.getPorts(), signal);
+        const previousPorts = ports.filter((candidate) => candidate.connected !== false);
         const transition = { atPort, previousPorts };
-        pendingLierdaDownload.current = transition;
-        flashStatus('正在等待利尔达下载口自动连接…');
-        port = await waitForLierdaDownloadPort(serial, transition);
+        const waiting = new AbortController();
+        const atFinished = deferredSerialResult();
+        let downloadPort;
+        try {
+          await requestLierdaDownloadMode(atPort, {
+            signal,
+            log: line => appendLog('flashLog', line + '\n'),
+            onDownloadRequested() { pendingLierdaDownload.current = transition; },
+            onDownloadSent() {
+              flashStatus('正在等待利尔达下载口。首次使用可点击「选择下载口」。');
+              downloadPort = chooseLierdaDownloadPort(serial, transition, {
+                signal: AbortSignal.any([signal, waiting.signal]),
+                pollAfter: atFinished.promise,
+                offerManualChoice(choosePort) {
+                  manualLierdaDownload.current = choosePort;
+                  update({ needsLierdaDownloadPort: true });
+                },
+              });
+              // A chooser can finish while the AT command is still waiting for its reply.
+              downloadPort.catch(() => {});
+            },
+            onDownloadRejected() { pendingLierdaDownload.current = null; },
+          });
+          atFinished.resolve();
+          port = await downloadPort;
+        } finally {
+          waiting.abort();
+          manualLierdaDownload.current = null;
+        }
         if (!port) {
           update({ needsLierdaDownloadPort: true });
           flashStatus('尚未接入下载口。请授权 Lierda QDLoader Port。');
           return;
         }
         pendingLierdaDownload.current = null;
+        update({ needsLierdaDownloadPort: false });
       }
       flashStatus('正在识别利尔达设备…');
       retryPort.current = port;
+      openingDownloadPort = true;
+      appendLog('flashLog', t('正在连接 QDLoader · @0 波特\n', baudrate));
       const { connectLierda: connectDevice } = await import('./lierda.mjs');
-      const session = await connectDevice(port, options, line => appendLog('flashLog', line));
+      const session = await connectDevice(port, { ...options, agent, signal }, line => appendLog('flashLog', line));
+      if (signal.aborted) {
+        await session.close().catch(() => {});
+        signal.throwIfAborted();
+      }
       flash.current = { port, session, platform: 'lierda', abort: new AbortController() };
       retryPort.current = null;
       lierdaBackup.current = null;
       update({ device: session, canReconnect: false, flashBackup: null });
-      const model = session.lierdaModel === 'pro-f9' ? 'NT26F9D0' : 'NT26F6D0';
-      flashStatus(localizedMessage('已连接 · @0 · @1 · Flash @2', model, session.chip, session.capacityLabel));
+      if (session.lierdaCompatibilityIssue) {
+        flashStatus('已连接 · 利尔达下载口');
+      } else {
+        const model = session.lierdaModel === 'pro-f9' ? 'NT26F9D0' : 'NT26F6D0';
+        flashStatus(localizedMessage('已连接 · @0 · @1 · Flash @2', model, session.chip, session.capacityLabel));
+      }
     }, (message, error) => {
-      if (error.name === 'NotFoundError') {
-        pendingLierdaDownload.current = null;
-        update({ needsLierdaDownloadPort: false });
-        flashStatus('未选择串口。可重新连接并选择利尔达设备。');
+      if (!signal.aborted && error.name === 'NotFoundError') {
+        flashStatus(pendingLierdaDownload.current
+          ? '未选择下载口。可点击「选择下载口」继续。'
+          : '未选择串口。可重新连接并选择利尔达设备。');
         return;
       }
       if (retryPort.current?.connected === false) retryPort.current = null;
@@ -351,9 +400,28 @@ export function useWorkbench() {
         canReconnect: Boolean(retryPort.current),
         needsLierdaDownloadPort: Boolean(pendingLierdaDownload.current),
       });
-      appendLog('flashLog', t(message) + '\n');
-      flashStatus(message, true);
+      if (signal.aborted) {
+        flashStatus('已取消连接。');
+        appendLog('flashLog', t('已取消连接。') + '\n');
+        return;
+      }
+      const status = openingDownloadPort && baudrate !== USB_BAUD
+        ? localizedMessage('@0 可在高级设置恢复默认 @1 波特后重试。', message, USB_BAUD)
+        : message;
+      appendLog('flashLog', t(status) + '\n');
+      flashStatus(status, true);
+    }).finally(() => {
+      lierdaConnection.current = null;
+      update({ lierdaConnecting: false });
     });
+  }
+
+  function cancelLierdaConnection() {
+    const controller = lierdaConnection.current;
+    if (!controller || controller.signal.aborted) return;
+    controller.abort();
+    flashStatus('正在取消连接…');
+    update({ lierdaConnecting: false });
   }
 
   function connect(options, reusePort = false, chooseOther = false) {
@@ -453,7 +521,7 @@ export function useWorkbench() {
     );
   }
 
-  function writeLierda(firmware) {
+  function writeLierda(firmware, restart) {
     const active = flash.current;
     if (active?.platform !== 'lierda' || firmware.targetDevice !== active.session) {
       flashStatus('烧录设备已变化，请重新检查设备并确认烧录。', true);
@@ -468,14 +536,15 @@ export function useWorkbench() {
     return run(async () => {
       let percent = 0;
       update({ tab: 'flash', complete: false });
-      progress(firmware.origin === 'official' ? '下载并核对固件' : '准备固件', 0);
+      progress('准备固件', 0);
       try {
-        const input = await resolveLierdaFirmware(firmware, abort.signal);
+        const input = firmware.input;
         abort.signal.throwIfAborted();
         appendLog('flashLog', t('选定固件：@0\n', input.filename));
         await releaseMonitor();
         abort.signal.throwIfAborted();
         await session.writeLierda(input, {
+          allowReinstall: firmware.writePlan.mode === 'reinstall',
           onProgress(fraction, message) {
             percent = Math.min(99, Math.max(percent, Math.round(99 * fraction)));
             progress(message, percent);
@@ -497,17 +566,22 @@ export function useWorkbench() {
         throw failure;
       }
       progress('烧录完成，校验通过', 100, 'success');
-      update({ complete: firmware.model === 'lite' });
+      let completionMessage = '写入并校验完成。已停留在下载模式，请按 RESET 启动固件。';
       try {
-        active.resetting = true;
-        await session.reset();
-        flashStatus('写入并校验完成。设备已复位。');
+        if (restart) {
+          active.resetting = true;
+          await session.reset();
+          completionMessage = '写入并校验完成。设备已复位。';
+          update({ complete: firmware.writePlan.mode !== 'app' });
+        }
       } catch (error) {
         appendLog('flashLog', t('自动复位失败：@0\n', error.message));
-        flashStatus('写入并校验完成。请按板上的复位键启动固件。');
+        completionMessage = '写入并校验完成。请按板上的复位键启动固件。';
       } finally {
         await releaseFlash().catch(error => appendLog('flashLog', t('释放串口失败：@0\n', error.message)));
       }
+      appendLog('flashLog', t(completionMessage) + '\n');
+      flashStatus(completionMessage);
     }, message => flashStatus(message, true));
   }
 
@@ -528,7 +602,7 @@ export function useWorkbench() {
   }
 
   function write(firmware, options) {
-    if (firmware.kind === 'lierda') return writeLierda(firmware);
+    if (firmware.kind === 'lierda') return writeLierda(firmware, options?.restart ?? true);
     if (!flash.current) {
       flashStatus('烧录串口已断开，请重新连接。', true);
       return;
@@ -685,6 +759,8 @@ export function useWorkbench() {
     serialAvailable: Boolean(serial),
     monitorStatus,
     connect,
+    chooseLierdaDownloadPort: () => manualLierdaDownload.current?.(),
+    cancelLierdaConnection,
     disconnect,
     write,
     downloadFlashBackup,

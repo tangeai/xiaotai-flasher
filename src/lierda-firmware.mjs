@@ -1,15 +1,14 @@
 import { LocalizedError, localizedMessage } from './i18n.mjs';
 import { downloadFirmware } from './catalog.mjs';
 
-import { lierdaBoards } from './lierda-boards.mjs';
+import { lierdaBoards, lierdaPackageSizeLimit } from './lierda-boards.mjs';
 
 export { lierdaBoards };
 
-const packageOverhead = 0x10000;
-
 export function prepareLierdaFirmware({ model, file, origin, selectedRelease }, capacity) {
   const board = lierdaBoards.find((candidate) => candidate.model === model);
-  if (!board) throw new LocalizedError('请选择实际连接的利尔达 Lite 或 Pro 板型。');
+  if (!board) throw new LocalizedError('请选择利尔达开发板型号。');
+  if (board.flashUnavailable) throw new LocalizedError(board.flashUnavailable);
   if (capacity != null && capacity !== board.flashBytes) {
     throw new LocalizedError('已连接设备的 Flash 容量与所选利尔达板型不匹配。');
   }
@@ -36,7 +35,7 @@ export function prepareLierdaFirmware({ model, file, origin, selectedRelease }, 
   if (!Number.isSafeInteger(file.size) || file.size <= 0) {
     throw new LocalizedError('BINPKG 固件文件为空或文件大小无效。');
   }
-  if (file.size > board.flashBytes + packageOverhead) {
+  if (file.size > lierdaPackageSizeLimit(board)) {
     throw new LocalizedError(localizedMessage('BINPKG 超出 @0 的固件包大小限制。', localizedMessage(board.name)));
   }
   return { ...firmware, file, filename: file.name };

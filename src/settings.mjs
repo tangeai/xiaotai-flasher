@@ -5,6 +5,10 @@ export const bkWriteRates = [
   6000000,
 ];
 
+export const lierdaWriteRates = [
+  9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000, 1500000, 2000000,
+];
+
 export const bkSettingFields = [
   [
     'bk-write-rate',
@@ -22,6 +26,30 @@ export const bkSettingFields = [
     '手动复位和自动复位模式下都可以按键。看到「等待下载握手」时按一下 RESET；若已自动连接，可跳过。',
   ],
 ];
+
+export const lierdaSettingFields = [
+  [
+    'lierda-before-reset',
+    '连接前复位',
+    [
+      ['auto', '通过 AT 自动进入下载模式'],
+      ['manual', '手动进入下载模式'],
+    ],
+    '点击「连接设备」后，网页会通过 AT 口发送下载命令。首次使用或有多个候选串口时，按浏览器提示选择端口。',
+  ],
+  [
+    'lierda-after-reset',
+    '烧录后复位',
+    [
+      ['reset', '重启并运行固件'],
+      ['stay', '停留在下载模式'],
+    ],
+    '校验通过后执行所选操作。选择停留时，按板上的 RESET 启动固件。',
+  ],
+];
+
+export const lierdaManualEntryHelp =
+  '按住 BOOT，点按 RESET（也可重新插拔 USB），再松开 BOOT。点击「连接设备」，如弹出选择窗口请选择 Lierda QDLoader Port。';
 
 export const settingFields = [
   [

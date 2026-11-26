@@ -187,8 +187,8 @@
       "flash_bytes": 8388608
     },
     {
-      "slug": "lierda-lite",
-      "model": "Lite 语音通话版 · NT26F6D0",
+      "slug": "lierda-ec718pm-lite",
+      "model": "NT26F6D0-Lite-EC718PM语音板",
       "chip": "EC718PM",
       "flash_bytes": 4194304,
       "modem": "NT26F6D0",
@@ -206,8 +206,17 @@
       ]
     },
     {
-      "slug": "lierda-pro",
-      "model": "Pro 视频通话版 · NT26F9D0",
+      "slug": "lierda-ec718pm-pro",
+      "model": "NT26F6D0-Pro-EC718PM语音板",
+      "chip": "EC718PM",
+      "flash_bytes": 4194304,
+      "modem": "NT26F6D0",
+      "modempkg": "F6D_D",
+      "releases": []
+    },
+    {
+      "slug": "lierda-ec718hm-pro",
+      "model": "NT26F9D0-Pro-EC718HM视频通话板",
       "chip": "EC718HM",
       "flash_bytes": 8388608,
       "modem": "NT26F9D0",

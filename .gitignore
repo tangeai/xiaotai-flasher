@@ -4,5 +4,6 @@ releases/
 .playwright-cli/
 /.openai/
 
-# Version-matched vendor binary supplied locally for the build.
-/public/lierda/agentboot-ec718pm-usb.bin
+# Only the runtime loader belongs in the public Lierda assets directory.
+/public/lierda/*
+!/public/lierda/agentboot-ec718pm-usb.bin

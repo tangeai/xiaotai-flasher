@@ -1,8 +1,10 @@
 import {
   chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync,
-  readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync,
+  readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
+import { LIERDA_AGENTBOOT_PATH } from '../src/lierda-agentboot.mjs';
+import { lierdaAgentBootInfo, validLierdaPublicAssets } from './lierda-agentboot-file.mjs';
 
 const releaseNamePattern = /^xiaotai-flasher-[0-9]{8}T[0-9]{6}Z-[A-Za-z0-9]+$/;
 
@@ -59,6 +61,11 @@ function publish(site, releaseName, source) {
     chmodSync(candidate, 0o755);
     copyCurrentAssets(site, candidate);
     cpSync(source, candidate, { recursive: true });
+    if (existsSync(join(candidate, LIERDA_AGENTBOOT_PATH))) {
+      writeFileSync(join(candidate, 'release-info.json'), JSON.stringify({
+        ...readReleaseInfo(candidate), lierda_agentboot: lierdaAgentBootInfo,
+      }) + '\n');
+    }
     activate(site, releaseName);
     installed = true;
   } finally {
@@ -77,7 +84,7 @@ function readReleaseInfo(current) {
   return existsSync(path) ? readJSON(path) : {};
 }
 
-function completeRelease(path) {
+function completeRelease(path, { rollback = false, requireAgentBoot = false } = {}) {
   const index = join(path, 'index.html');
   const options = { throwIfNoEntry: false };
   if (
@@ -92,10 +99,22 @@ function completeRelease(path) {
     /<(?:script|link)\b[^>]*\b(?:src|href)=["']\.\/(assets\/[\w.-]+)["']/g,
   );
   const assets = Array.from(assetTags, ([, asset]) => asset);
-  return assets.some((asset) => asset.endsWith('.js')) && assets.every((asset) => {
+  const hasEntryAssets = assets.some((asset) => asset.endsWith('.js')) && assets.every((asset) => {
     const file = lstatSync(join(path, asset), options);
     return file?.isFile() && file.size > 0;
   });
+  if (!hasEntryAssets) return false;
+  try {
+    const info = readReleaseInfo(path);
+    if (info === null || typeof info !== 'object') return false;
+    const includesAgentBoot = Object.hasOwn(info, 'lierda_agentboot');
+    // Old releases without loader metadata keep their original rollback checks.
+    if (rollback) return !includesAgentBoot || validLierdaPublicAssets(path, info.lierda_agentboot);
+    return validLierdaPublicAssets(path, (includesAgentBoot || requireAgentBoot) ? lierdaAgentBootInfo : undefined);
+  } catch (error) {
+    if (error instanceof SyntaxError) return false;
+    throw error;
+  }
 }
 
 function displayStatus(site) {
@@ -110,7 +129,7 @@ function displayStatus(site) {
   const versions = readdirSync(site.versions, { withFileTypes: true })
     .filter((entry) =>
       entry.isDirectory() && releaseNamePattern.test(entry.name) &&
-      completeRelease(join(site.versions, entry.name)))
+      completeRelease(join(site.versions, entry.name), { rollback: true }))
     .map((entry) => entry.name)
     .sort().reverse();
   console.log('[INFO] 可用版本\n' + versions.join('\n'));
@@ -120,7 +139,7 @@ function rollback(site, releaseName) {
   if (!releaseNamePattern.test(releaseName)) throw new Error('请传入 status 显示的版本目录名。');
   if (!site.current) throw new Error('尚未部署工作台，无法切换版本。');
   const candidate = join(site.versions, releaseName);
-  if (!lstatSync(candidate, { throwIfNoEntry: false })?.isDirectory() || !completeRelease(candidate)) {
+  if (!lstatSync(candidate, { throwIfNoEntry: false })?.isDirectory() || !completeRelease(candidate, { rollback: true })) {
     throw new Error('指定版本不存在或静态产物不完整。');
   }
   if (candidate !== site.current) {
@@ -138,7 +157,10 @@ function matches(site, commit, boardsUrl) {
 
 const [command, path, ...args] = process.argv.slice(2);
 try {
-  if (command === 'verify') process.exit(completeRelease(resolve(path)) ? 0 : 1);
+  if (command === 'verify') {
+    const requireAgentBoot = args.includes('--require-lierda-agentboot');
+    process.exit(completeRelease(resolve(path), { requireAgentBoot }) ? 0 : 1);
+  }
   const site = deployment(path, command === 'publish');
   switch (command) {
     case 'publish': publish(site, ...args); break;

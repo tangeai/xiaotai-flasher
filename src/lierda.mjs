@@ -1,13 +1,14 @@
 import { LocalizedError, t, localizedMessage } from './i18n.mjs';
 import {
-  isDownloadPort, USB_BAUD, AGENT_SYNC, LPC_SYNC, HEAD_IMAGE,
+  isDownloadPort, parseLierdaBaudrate, USB_BAUD, AGENT_SYNC, LPC_SYNC, HEAD_IMAGE,
   EMPTY, words, sendCommand, synchronize, imageInfo, sendImageData, imageHeader,
-  connectAgent, readMemory,
+  connectAgent, readMemory, waitForSerialOperation,
 } from './lierda-serial.mjs';
+import { loadLierdaAgentBoot } from './lierda-agentboot.mjs';
 import {
   flashBase as AP_XIP_BASE, hexBytes as bytesHex, lierdaSha256 as sha256,
-  lierdaBootFingerprintAddress, lierdaFingerprintLength, matchLierdaBootFingerprint,
-  matchesLierdaApplicationLayout, parseLierdaPackage,
+  lierdaBootFingerprintAddress, lierdaFingerprintLength, lierdaBootCandidates, matchLierdaBootFingerprint,
+  matchesLierdaApplicationLayout, parseLierdaPackage, getLierdaFlashPlan, validateHmBootHeaders,
 } from './lierda-package.mjs';
 
 const FLASH_ERASE = 0x10;
@@ -18,6 +19,8 @@ const ERASE_REQUEST_SIZE = 0x1000;
 const WRITE_BLOCK_SIZE = 0x10000;
 const MAX_READ_SIZE = 240;
 const REPORT_INTERVAL = 0x80000;
+
+class LierdaCompatibilityError extends LocalizedError {}
 
 function hexAddress(value) {
   return '0x' + value.toString(16).padStart(8, '0').toUpperCase();
@@ -45,15 +48,14 @@ async function readRange(io, start, length, onProgress = () => {}) {
   return data;
 }
 
-async function verifyCurrentBase(backup, images, hardware) {
-  for (const image of images.slice(0, 3)) {
-    const current = backup.subarray(image.address, image.address + image.data.length);
-    if (await sha256(current) !== image.sha) {
-      throw new LocalizedError(localizedMessage('当前 @0 与所选固件的底包不一致，请先核对板卡布局', image.role));
+async function verifyCurrentBase(backup, hardware) {
+  for (const { role, address, capacity, digest } of hardware.baseImages) {
+    const current = backup.subarray(address, address + capacity);
+    if (await sha256(current) !== digest) {
+      throw new LocalizedError(localizedMessage('当前 @0 与已识别的设备底包不一致。', role));
     }
   }
-  const app = images.find(({ role }) => role === "APP");
-  const appHeader = backup.subarray(app.address, app.address + 24);
+  const appHeader = backup.subarray(hardware.app.address, hardware.app.address + 24);
   if (!matchesLierdaApplicationLayout(appHeader, hardware.app)) {
     throw new LocalizedError(localizedMessage('当前设备的应用和文件系统布局与 @0 不匹配。', localizedMessage(hardware.boardLabel)));
   }
@@ -143,7 +145,8 @@ async function readBackup(io, hardware, plan, saveBackup, log, onProgress) {
   await synchronize(io, LPC_SYNC, 'LPC');
   log(t('回读烧录前的内部 Flash · @0 MiB。', hardware.size / 0x100000));
   const bytes = await readRange(io, 0, hardware.size, onProgress);
-  await verifyCurrentBase(bytes, plan.images, hardware);
+  await verifyCurrentBase(bytes, hardware);
+  if (hardware !== plan.profile) await validateHmBootHeaders(bytes, hardware);
   const digest = await sha256(bytes);
   const location = await saveBackup(bytes.slice(), digest);
   if (typeof location !== 'string' || !location) throw new LocalizedError('Flash 备份未确认保存。');
@@ -162,72 +165,129 @@ async function verifyImages(io, images, log, progress) {
   }
 }
 
-async function detectLierdaHardware(io) {
-  const bootloader = await readMemory(io, AP_XIP_BASE + lierdaBootFingerprintAddress, lierdaFingerprintLength);
-  const hardware = matchLierdaBootFingerprint(await sha256(bootloader));
-  if (!hardware) throw new LocalizedError('无法识别设备的 BL 指纹。支持 NT26F6D0 Lite (F6D_D) 和 NT26F9D0 Pro (F9D_D)。');
-
-  for (const { role, address, sampleSha } of hardware.baseImages.slice(1)) {
-    const sample = await readMemory(io, AP_XIP_BASE + address, lierdaFingerprintLength);
-    if (await sha256(sample) !== sampleSha) {
-      throw new LocalizedError(localizedMessage('当前设备的 @0 指纹与 @1 不匹配。', role, localizedMessage(hardware.boardLabel)));
+async function verifyReinstall(io, backup, flashPlan, firmware, progress) {
+  const expected = backup.slice();
+  for (const { start, end } of flashPlan.eraseRanges) expected.fill(0xff, start, end);
+  for (const { data, address } of firmware.images) expected.set(data, address);
+  await synchronize(io, LPC_SYNC, 'LPC');
+  const actual = await readRange(io, 0, expected.length, progress);
+  // AgentBoot generates the two boot headers from the new BL and AP, independently of the BINPKG payloads.
+  await validateHmBootHeaders(actual, firmware.profile);
+  for (let offset = 0x2000; offset < actual.length; offset++) {
+    if (actual[offset] !== expected[offset]) {
+      throw new LocalizedError(localizedMessage('整包重装回读不一致 · @0', hexAddress(offset)));
     }
+  }
+}
+
+async function detectLierdaHardware(io, log) {
+  const bootloader = await readMemory(io, AP_XIP_BASE + lierdaBootFingerprintAddress, lierdaFingerprintLength);
+  const bootDigest = await sha256(bootloader);
+  const candidates = lierdaBootCandidates(bootDigest);
+  if (!candidates.length) {
+    log(t('设备 BL 样本 SHA-256 · @0', bootDigest) + '\n');
+    throw new LierdaCompatibilityError('设备的引导程序（BL）与已适配的底包不匹配，暂时无法烧录。');
+  }
+
+  // The two HM layouts share their BL sample and AP address, but have different AP images.
+  const ap = candidates[0].baseImages.find(image => image.role === 'AP');
+  const apSample = await readMemory(io, AP_XIP_BASE + ap.address, lierdaFingerprintLength);
+  const hardware = matchLierdaBootFingerprint(bootDigest, await sha256(apSample));
+  if (!hardware) {
+    throw new LierdaCompatibilityError(localizedMessage('当前设备的 @0 指纹与 @1 不匹配。', 'AP', localizedMessage(candidates[0].boardLabel)));
+  }
+  const cp = hardware.baseImages.find(image => image.role === 'CP');
+  const cpSample = await readMemory(io, AP_XIP_BASE + cp.address, lierdaFingerprintLength);
+  if (await sha256(cpSample) !== cp.sampleSha) {
+    throw new LierdaCompatibilityError(localizedMessage('当前设备的 @0 指纹与 @1 不匹配。', 'CP', localizedMessage(hardware.boardLabel)));
   }
   const appHeader = await readMemory(io, AP_XIP_BASE + hardware.app.address, 24);
   if (!matchesLierdaApplicationLayout(appHeader, hardware.app)) {
-    throw new LocalizedError(localizedMessage('当前设备的应用和文件系统布局与 @0 不匹配。', localizedMessage(hardware.boardLabel)));
+    throw new LierdaCompatibilityError(localizedMessage('当前设备的应用和文件系统布局与 @0 不匹配。', localizedMessage(hardware.boardLabel)));
   }
   if (hardware.applicationOnly) {
     const low = await readMemory(io, AP_XIP_BASE, 32);
     const high = await readMemory(io, AP_XIP_BASE + 0x400000, 32);
     if (high.every((byte, index) => byte === low[index])) {
-      throw new LocalizedError('内部 Flash 上半区与起始地址回读相同，无法确认 8 MiB 布局。');
+      throw new LierdaCompatibilityError('内部 Flash 上半区与起始地址回读相同，无法确认 8 MiB 布局。');
     }
   }
   return hardware;
 }
 
-export async function connectLierda(port, _settings, log = () => {}) {
+export async function connectLierda(port, settings, log = () => {}) {
   if (!isDownloadPort(port)) throw new LocalizedError('请选择利尔达 QDLoader 下载口（17D1:0001）。');
-  const url = new URL('./lierda/agentboot-ec718pm-usb.bin', globalThis.document?.baseURI ?? import.meta.url);
-  const response = await fetch(url);
-  if (!response.ok) throw new LocalizedError(localizedMessage('无法加载 USB AgentBoot · HTTP @0', response.status));
-  const agent = new Uint8Array(await response.arrayBuffer());
+  const { baudrate: requestedRate = USB_BAUD, signal } = settings ?? {};
+  signal?.throwIfAborted();
+  const baudrate = parseLierdaBaudrate(requestedRate);
+  if (baudrate === null) throw new LocalizedError('请输入 100 至 3276700 之间、且为 100 整数倍的 QDLoader 波特率。');
+  const agent = settings?.agent ?? await loadLierdaAgentBoot(signal);
+  signal?.throwIfAborted();
   let connection;
   let hardware;
+  let compatibilityError;
   let closed = false;
+  let opened = false;
   let busy = false;
   let resetAllowed = false;
   let interruptedBackup;
-  const close = async () => {
+  const close = async (abortReason) => {
     if (closed) return;
     closed = true;
     interruptedBackup = undefined;
     try {
-      await connection?.close();
+      await connection?.close(abortReason);
     } finally {
-      if (port.readable || port.writable) await port.close();
+      if (opened && (port.readable || port.writable)) {
+        const closing = port.close();
+        if (abortReason !== undefined) closing.catch(() => {});
+        else await closing;
+      }
     }
   };
   try {
-    await port.open({ baudRate: USB_BAUD, dataBits: 8, stopBits: 1,
+    const opening = port.open({ baudRate: baudrate, dataBits: 8, stopBits: 1,
       parity: 'none', flowControl: 'none' });
-    await port.setSignals({ dataTerminalReady: true });
-    connection = await connectAgent(port, agent, (line) => log(line + '\n'));
-    hardware = await detectLierdaHardware(connection.io);
-    log(t('@0 底包和 @1 MiB Flash 布局核对通过。\n', t(hardware.boardLabel), hardware.size / 0x100000));
+    try {
+      await waitForSerialOperation(opening, signal);
+      opened = true;
+    } catch (error) {
+      // Web Serial cannot cancel open(). Close a late successful open, but
+      // never close another owner's port when this open itself was rejected.
+      if (signal?.aborted) opening.then(() => port.close()).catch(() => {});
+      throw error;
+    }
+    signal?.throwIfAborted();
+    await waitForSerialOperation(port.setSignals({ dataTerminalReady: true }), signal);
+    connection = await connectAgent(port, agent, (line) => log(line + '\n'), baudrate, signal);
+    try {
+      hardware = await detectLierdaHardware(connection.io, log);
+    } catch (error) {
+      if (!(error instanceof LierdaCompatibilityError)) throw error;
+      compatibilityError = error;
+    }
+    signal?.throwIfAborted();
+    if (hardware) {
+      log(t('@0 底包和 @1 MiB Flash 布局核对通过。\n', t(hardware.boardLabel), hardware.size / 0x100000));
+    } else {
+      log(t('下载口已连接，已禁用烧录。@0', compatibilityError) + '\n');
+    }
   } catch (error) {
-    await close().catch(() => {});
-    throw error;
+    await close(signal?.reason).catch(() => {});
+    throw signal?.reason ?? error;
   }
   const { io } = connection;
+  io.finishConnection();
   const isActive = () => !closed && port.connected !== false && port.readable && port.writable;
 
   return {
-    chip: hardware.chip, capacity: hardware.size, capacityLabel: hardware.size / 0x100000 + ' MiB',
-    lierdaModel: hardware.model, close,
+    chip: hardware?.chip ?? null, capacity: hardware?.size ?? null,
+    capacityLabel: hardware ? hardware.size / 0x100000 + ' MiB' : null,
+    lierdaModel: hardware?.model ?? null, lierdaProfile: hardware ?? null, close,
+    get lierdaCompatibilityIssue() { return compatibilityError?.message ?? ''; },
     get canRetry() { return Boolean(isActive() && !resetAllowed); },
-    async writeLierda(input, { onProgress = () => {}, log: writeLog = log, saveBackup } = {}) {
+    async writeLierda(input, { onProgress = () => {}, log: writeLog = log, saveBackup, allowReinstall = false } = {}) {
+      if (compatibilityError) throw compatibilityError;
       if (!isActive() || busy || resetAllowed) throw new LocalizedError('设备当前无法开始写入。');
       busy = true;
       try {
@@ -238,13 +298,17 @@ export async function connectLierda(port, _settings, log = () => {}) {
           throw new LocalizedError('所选固件与当前连接的利尔达板型不匹配。');
         }
         const plan = await parseLierdaPackage(bytes, { model: target, stage, filename, sha256: expectedSha });
-        const writeImages = hardware.applicationOnly ? plan.images.filter(({ role }) => role === 'APP') : plan.images;
+        const flashPlan = getLierdaFlashPlan(hardware, plan.profile);
+        if (flashPlan.mode === 'reinstall' && allowReinstall !== true) {
+          throw new LocalizedError('整包重装将清除用户数据，请先确认。');
+        }
+        const writeImages = flashPlan.mode === 'app' ? plan.images.filter(({ role }) => role === 'APP') : plan.images;
         let backup = interruptedBackup;
         if (backup) {
           if (plan.sha256 !== backup.packageSha || await sha256(backup.bytes) !== backup.digest) {
             throw new LocalizedError('请用上次中断的固件继续烧录。');
           }
-          await verifyPreserved(io, backup.bytes, hardware.preservedRanges);
+          await verifyPreserved(io, backup.bytes, flashPlan.preservedRanges);
           writeLog(t('使用本次连接上次写入前的完整备份。'));
         } else {
           backup = await readBackup(io, hardware, plan, saveBackup, writeLog, (end, total) =>
@@ -253,7 +317,7 @@ export async function connectLierda(port, _settings, log = () => {}) {
         interruptedBackup = backup;
         writeLog(t('备份已保存 · @0 · SHA-256 @1', backup.location, backup.digest));
         onProgress(0.35, '擦除固件区域');
-        await erase(io, hardware.eraseRanges, writeLog,
+        await erase(io, flashPlan.eraseRanges, writeLog,
           (end, total) => onProgress(0.35 + 0.10 * end / total, '擦除固件区域'));
 
         const writeSize = writeImages.reduce((sum, image) => sum + image.data.length, 0);
@@ -264,7 +328,11 @@ export async function connectLierda(port, _settings, log = () => {}) {
           written += image.data.length;
         }
         onProgress(0.75, '回读校验');
-        if (hardware.applicationOnly) {
+        if (flashPlan.mode === 'reinstall') {
+          await verifyReinstall(io, backup.bytes, flashPlan, plan, end =>
+            onProgress(0.75 + 0.24 * end / hardware.size, '回读校验'));
+          writeLog(t('整包重装校验通过，出厂数据和校准区与备份一致。'));
+        } else if (flashPlan.mode === 'app') {
           const [app] = writeImages;
           await verifyImages(io, writeImages, writeLog, (end) =>
             onProgress(0.75 + 0.24 * end / hardware.size, '回读应用'));

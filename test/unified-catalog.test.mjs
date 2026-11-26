@@ -5,10 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { generateCatalog } from '../scripts/generate-boards.mjs';
+import curatedCatalog from '../boards.json' with { type: 'json' };
 
 const api = 'https://api.github.com/repos/tangeai/';
 const releaseList = (repository) => api + repository + '/releases?per_page=100&page=1';
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const lierdaSlugs = ['lierda-ec718pm-lite', 'lierda-ec718pm-pro', 'lierda-ec718hm-pro'];
 
 async function fixture(t) {
   const output = await mkdtemp(join(tmpdir(), 'xiaotai-unified-catalog-'));
@@ -50,7 +52,7 @@ test('one catalog publishes all board families, preserving the old BIN paths and
   assert.equal(bk.releases.length, 1);
   assert.equal(bk.releases[0].bin_url, './firmware/v1_bk-fixture_all-app.bin');
   assert.equal(hash(await readFile(join(output, bk.releases[0].bin_url))), bk.releases[0].sha256);
-  for (const slug of ['lierda-lite', 'lierda-pro']) {
+  for (const slug of lierdaSlugs) {
     assert.deepEqual(catalog.boards.find((board) => board.slug === slug)?.releases, []);
   }
   assert.equal((await generateCatalog(output, true)).failed, false);
@@ -64,7 +66,7 @@ test('a failed source retains its last good rows while a successful source updat
   const { output, routes, readCatalog } = await fixture(t);
   await generateCatalog(output);
   const catalog = await readCatalog();
-  const pro = catalog.boards.find((board) => board.slug === 'lierda-pro');
+  const pro = catalog.boards.find((board) => board.slug === 'lierda-ec718hm-pro');
   const bytes = Buffer.from('existing verified release');
   const sha256 = hash(bytes);
   const filename = 'pro-v1.0.0-' + sha256 + '.binpkg';
@@ -73,12 +75,17 @@ test('a failed source retains its last good rows while a successful source updat
     bin_url: './firmware/' + filename, sha256, byte_length: bytes.length, source_filename: '1.0.0_pro.binpkg',
   });
   await writeFile(join(output, 'firmware', filename), bytes);
-  await writeFile(join(output, 'boards.json'), JSON.stringify(catalog));
+  const oldSlug = 'lierda-pro';
+  await writeFile(join(output, 'boards.json'), JSON.stringify({
+    boards: catalog.boards.map(board => board === pro ? { ...board, slug: oldSlug } : board),
+  }));
 
   routes.set(releaseList('xiaotai-lierda'), () => Response.json([{ tag_name: 'pro-v2.0.0', assets: [] }]));
   assert.equal((await generateCatalog(output, true)).failed, true);
   const partial = await readCatalog();
   assert.deepEqual(partial.boards.find((board) => board.slug === pro.slug).releases, pro.releases);
+  assert.ok(!partial.boards.some(board => board.slug === oldSlug));
+  assert.deepEqual(partial.boards.find(board => board.slug === 'lierda-ec718pm-pro').releases, []);
   const bk = partial.boards.find((board) => board.chip === 'BK7258');
   assert.equal(bk.releases.length, 2);
 
@@ -88,6 +95,39 @@ test('a failed source retains its last good rows while a successful source updat
   const recovered = await readCatalog();
   assert.deepEqual(recovered.boards.find((board) => board.slug === pro.slug).releases, []);
   assert.deepEqual(recovered.boards.find((board) => board.slug === bk.slug), bk);
+});
+
+test('sync retains deployed curated BINs and display metadata without restoring other old releases', async t => {
+  const { output, readCatalog } = await fixture(t);
+  await generateCatalog(output);
+  const { boards } = await readCatalog();
+  const bk = boards.find(board => board.chip === 'BK7258');
+  bk.releases[0].version += '（特别版）';
+  bk.releases[0].embedded_version = '1.2.0+build.112';
+  const curated = structuredClone(curatedCatalog.boards.find(board => board.slug === 'xmini-c3-v3'));
+  const pinned = curated.releases[0];
+  curated.releases.push(
+    { ...pinned, version: 'wrong hash', sha256: 'c'.repeat(64) },
+    { ...pinned, version: 'wrong URL', bin_url: './firmware/other.bin' },
+  );
+  const offline = structuredClone(curatedCatalog.boards.find(board => board.slug === 'mz28-ai-ppd-v12'));
+  offline.releases[0].status = 'offline';
+  const withdrawn = { ...curated, slug: 'previously-generated', releases: [pinned] };
+  await writeFile(join(output, 'boards.json'), JSON.stringify({ boards: [...boards, curated, offline, withdrawn] }));
+
+  for (let run = 0; run < 2; run++) {
+    assert.equal((await generateCatalog(output)).failed, false);
+    const result = (await readCatalog()).boards;
+    assert.deepEqual(result.find(board => board.slug === bk.slug), bk);
+    assert.deepEqual(result.find(board => board.slug === curated.slug), { ...curated, releases: [pinned] });
+    assert.ok(!result.some(board => board.slug === offline.slug || board.slug === withdrawn.slug));
+  }
+  bk.releases[0].status = 'draft';
+  await writeFile(join(output, 'boards.json'), JSON.stringify({ boards: [bk] }));
+  assert.equal((await generateCatalog(output, true)).failed, false);
+  const versions = (await readCatalog()).boards.find(board => board.slug === bk.slug).releases;
+  assert.equal(versions.find(release => release.version === bk.releases[0].version).status, 'draft');
+  assert.deepEqual(versions.filter(release => release.recommended).map(release => release.status), ['published']);
 });
 
 test('an upstream outage cannot publish a placeholder catalog or reorder the previous catalog', async (t) => {
@@ -121,7 +161,7 @@ test('an incomplete catalog is rebuilt only after every source succeeds', async 
 
     routes.set(releaseURL, healthy);
     assert.equal((await generateCatalog(output)).failed, false);
-    assert.deepEqual((await readCatalog()).boards.map(board => board.slug), ['bk-fixture', 'lierda-lite', 'lierda-pro']);
+    assert.deepEqual((await readCatalog()).boards.map(board => board.slug), ['bk-fixture', ...lierdaSlugs]);
   }
 });
 
@@ -133,5 +173,5 @@ test('a UTF-8 BOM in an existing catalog preserves its boards during a partial s
   assert.equal((await generateCatalog(output)).failed, true);
   const { boards } = await readCatalog();
   assert.deepEqual(boards[0], previous);
-  assert.deepEqual(boards.slice(1).map(board => board.slug), ['lierda-lite', 'lierda-pro']);
+  assert.deepEqual(boards.slice(1).map(board => board.slug), lierdaSlugs);
 });

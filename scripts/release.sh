@@ -62,7 +62,7 @@ if ! "$skip_install"; then
   npm ci
 fi
 npm run build -- --outDir "$site_dir" --emptyOutDir
-node "$repo_dir/scripts/site-release.mjs" verify "$site_dir" || fail 'Release output is incomplete.'
+node "$repo_dir/scripts/site-release.mjs" verify "$site_dir" --require-lierda-agentboot || fail 'Release output is incomplete. Check the built entry and the bundled Lierda USB AgentBoot.'
 
 node --input-type=module - "$site_dir/boards-source.json" "$boards_url" <<'NODE'
 import { readFileSync, writeFileSync } from 'node:fs';

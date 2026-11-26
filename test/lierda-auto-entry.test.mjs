@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  chooseLierdaDownloadPort,
+  deferredSerialResult,
   isDownloadPort,
   isLierdaAtPort,
   lierdaAtFilter,
@@ -20,6 +22,34 @@ const decoder = new TextDecoder();
 function portInfo(info) {
   return { connected: true, getInfo: () => info };
 }
+
+test('records the AT handoff before reboot and cancels the outstanding reboot reply promptly', { timeout: 2000 }, async () => {
+  const controller = new AbortController();
+  const port = atPort({ probe: ['OK\r\n'], identity: ['Lierda\r\nOK\r\n'] });
+  let markRequested;
+  const requested = new Promise(done => { markRequested = done; });
+  const attempt = requestLierdaDownloadMode(port, {
+    signal: controller.signal, timeoutMs: 30000,
+    onDownloadRequested() {
+      assert.deepEqual(port.sent, [atProbe, atIdentity]);
+      markRequested();
+    },
+  });
+  await requested;
+  controller.abort();
+  await assert.rejects(attempt, error => error === controller.signal.reason);
+  assert.deepEqual(port.sent, [atProbe, atIdentity, enterDownload]);
+  assert.equal(port.closed, true);
+});
+
+test('can cancel while the browser is still enumerating QDLoader ports', { timeout: 2000 }, async () => {
+  const controller = new AbortController();
+  const attempt = waitForLierdaDownloadPort({ getPorts: () => new Promise(() => {}) }, {
+    timeoutMs: 30000, signal: controller.signal,
+  });
+  controller.abort();
+  await assert.rejects(attempt, error => error === controller.signal.reason);
+});
 
 function atPort({ info = lierdaAtFilter, initial = [], probe = [], identity = [], reboot = [], disconnect = false } = {}) {
   let readStream;
@@ -108,7 +138,8 @@ test('opens the native chooser on first use, ambiguity or explicit change', asyn
   serial.getPorts = async () => [at];
   assert.equal(await selectLierdaPort(serial, { chooseOther: true }), at);
   assert.equal(await selectLierdaPort(serial, { downloadOnly: true }), at);
-  assert.deepEqual(chooserCalls, [[], [], [], [{ filters: [lierdaDownloadFilter] }]]);
+  const lierdaPorts = [{ filters: [lierdaAtFilter, lierdaDownloadFilter] }];
+  assert.deepEqual(chooserCalls, [lierdaPorts, lierdaPorts, lierdaPorts, [{ filters: [lierdaDownloadFilter] }]]);
 });
 
 test('recognizes the Lierda AT interface from already granted ports that share USB IDs', async () => {
@@ -150,8 +181,8 @@ test('gives a briefly missing granted port a chance to enumerate before promptin
   assert.equal(await selectLierdaPort(serial), port);
 });
 
-test('identifies both supported models on the selected port before sending the exact one-shot reboot', async () => {
-  for (const model of ['NT26F6D0', 'NT26F9D0']) {
+test('accepts a manufacturer line regardless of the model reported by ATI', async () => {
+  for (const model of ['NT26F6D0', 'NT26F9D0', 'UNKNOWN']) {
     const port = atPort({ probe: ['AT\r\nO', 'K\r', '\n'], identity: ['Lierda\r', '\n' + model + '\r\nOK\r\n'], reboot: ['\r\nOK\r\n'] });
     const result = await requestLierdaDownloadMode(port, { timeoutMs: 100 });
     assert.deepEqual(result, { acknowledged: true });
@@ -160,8 +191,24 @@ test('identifies both supported models on the selected port before sending the e
   }
 });
 
-test('a generic AT response or an unsupported identity cannot reset the modem', async () => {
-  for (const identity of [[], ['OK\r\n'], ['Lierda\r\nUNKNOWN\r\nOK\r\n'], ['Other\r\nNT26F6D0\r\nOK\r\n']]) {
+test('recognizes the factory ATI format before switching to download mode', async () => {
+  for (const base of ['F6D_D', 'F9D_D', 'F6D_A']) {
+    const port = atPort({
+      probe: ['OK\r\n'],
+      identity: ['Lierda, ' + base + ' ', base + '_V0101\r\nOK\r\n'],
+      reboot: ['OK\r\n'],
+    });
+    assert.deepEqual(await requestLierdaDownloadMode(port), { acknowledged: true });
+    assert.deepEqual(port.sent, [atProbe, atIdentity, enterDownload]);
+  }
+});
+
+test('generic replies, wrong manufacturers and log text cannot authorize a reboot', async () => {
+  const unsupported = [
+    'Other\r\nNT26F6D0', 'Other, F6D_D F6D_D_V0101', 'Lierda, F6D_D F9D_D_V0101',
+    'log: Lierda, F6D_D F6D_D_V0101', 'Lierda, F6D_D F6D_D_V0101 log',
+  ];
+  for (const identity of [[], ['OK\r\n'], ...unsupported.map(line => [line + '\r\nOK\r\n'])]) {
     const port = atPort({ probe: ['OK\r\n'], identity });
     await assert.rejects(requestLierdaDownloadMode(port, { timeoutMs: 50 }), /手动进入下载模式.*QDLoader/);
     assert.deepEqual(port.sent, [atProbe, atIdentity]);
@@ -192,7 +239,13 @@ test('an AT error stops before sending the reboot', async () => {
 
 test('a rejected reboot is not repeated', async () => {
   const port = atPort({ probe: ['OK\r\n'], identity: ['Lierda\r\nNT26F6D0\r\nOK\r\n'], reboot: ['ERROR\r\n'] });
-  await assert.rejects(requestLierdaDownloadMode(port, { timeoutMs: 100 }), /拒绝进入下载模式/);
+  const events = [];
+  await assert.rejects(requestLierdaDownloadMode(port, {
+    timeoutMs: 100,
+    onDownloadRequested: () => events.push('requested'),
+    onDownloadRejected: () => events.push('rejected'),
+  }), /拒绝进入下载模式/);
+  assert.deepEqual(events, ['requested', 'rejected']);
   assert.deepEqual(port.sent, [atProbe, atIdentity, enterDownload]);
   assert.equal(port.closed, true);
 });
@@ -253,6 +306,55 @@ test('never reuses a QDLoader present before transition and returns null for mis
     previousPorts: [old], timeoutMs: 25,
   }), null);
   assert.equal(await waitForLierdaDownloadPort({ getPorts: async () => [] }, { timeoutMs: 25 }), null);
+});
+
+test('offers a manual download-port choice while automatic discovery is pending', async () => {
+  const at = portInfo(lierdaAtFilter);
+  const automatic = portInfo(lierdaDownloadFilter);
+  const manual = portInfo(lierdaDownloadFilter);
+  const grant = deferredSerialResult();
+  let choose;
+  let chooserCalls = 0;
+  let enumerated = [at];
+  const atFinished = deferredSerialResult();
+  const result = chooseLierdaDownloadPort({
+    getPorts: async () => enumerated,
+    requestPort(filters) {
+      assert.deepEqual(filters, { filters: [lierdaDownloadFilter] });
+      chooserCalls++;
+      return grant.promise;
+    },
+  }, { atPort: at, previousPorts: [at] }, {
+    pollAfter: atFinished.promise,
+    offerManualChoice(callback) { choose = callback; },
+  });
+  choose();
+  choose();
+  assert.equal(chooserCalls, 1);
+  at.connected = false;
+  enumerated = [automatic, manual];
+  atFinished.resolve();
+  grant.resolve(manual);
+  assert.equal(await result, manual);
+});
+
+test('keeps automatic QDLoader discovery available after the AT handoff without opening a picker', async () => {
+  const at = { ...portInfo(lierdaAtFilter), connected: false };
+  const loader = portInfo(lierdaDownloadFilter);
+  let choose;
+  let discoveryCalls = 0;
+  const atFinished = deferredSerialResult();
+  const result = chooseLierdaDownloadPort({
+    getPorts: async () => { discoveryCalls++; return [loader]; },
+    requestPort() { assert.fail('An authorized QDLoader was already found'); },
+  }, { atPort: at, previousPorts: [at] }, {
+    pollAfter: atFinished.promise,
+    offerManualChoice(callback) { choose = callback; },
+  });
+  assert.equal(discoveryCalls, 0);
+  atFinished.resolve();
+  assert.equal(await result, loader);
+  choose();
 });
 
 test('the second click opens a filtered chooser and rejects a download port from before the switch', async () => {

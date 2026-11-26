@@ -1,17 +1,12 @@
-import { t } from './i18n.mjs';
+import { LocalizedError, localizedMessage, t } from './i18n.mjs';
 import { useEffect, useState } from 'react';
-import { lierdaBoards, prepareLierdaFirmware } from './lierda-firmware.mjs';
+import { lierdaBoardForLink } from './lierda-boards.mjs';
+import { lierdaBoards, resolveLierdaFirmware } from './lierda-firmware.mjs';
 import { parseLierdaPackage } from './lierda-package.mjs';
-
-export function lierdaBoardForLink(slug) {
-  const canonical = slug === 'lierda-pro-f9' ? 'lierda-pro' : slug;
-  return lierdaBoards.find((board) => board.slug === canonical);
-}
 
 export function initialLierdaSelection(board) {
   return {
     model: (board ?? lierdaBoards[0]).model,
-    modelChosen: Boolean(board),
     versions: {},
     origin: 'official',
     file: null,
@@ -22,34 +17,37 @@ export function matchesLierdaDevice({ model, chip, flashBytes }, device) {
   return device?.lierdaModel === model && device.chip === chip && device.capacity === flashBytes;
 }
 
-export function useLierdaPreflight(selection, enabled) {
+export function useLierdaPreflight(selection, enabled, selectedRelease) {
   const { model, origin } = selection;
   const file = enabled && origin === 'local' ? selection.file : null;
+  const release = enabled && origin === 'official' ? selectedRelease : null;
   const [result, setResult] = useState(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    if (!file) return;
-    let canceled = false;
+    if (!file && !release) return;
+    const controller = new AbortController();
     (async () => {
       try {
-        const { filename } = prepareLierdaFirmware({ model, file, origin: 'local' });
-        const bytes = new Uint8Array(await file.arrayBuffer());
-        if (canceled) return;
-        await parseLierdaPackage(bytes, { model, stage: 'app', filename });
-        if (!canceled) setResult({ file, model, valid: true });
-      } catch {
-        if (!canceled) setResult({ file, model, valid: false });
+        const input = await resolveLierdaFirmware({ kind: 'lierda', model, file, release, origin }, controller.signal);
+        const plan = await parseLierdaPackage(input.bytes, input);
+        if (!controller.signal.aborted) setResult({ file, release, model, attempt, status: 'ready', input, profile: plan.profile });
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        const detail = error instanceof LocalizedError ? error : localizedMessage('无法校验固件。@0', error);
+        setResult({ file, release, model, attempt, status: 'invalid', error: detail });
       }
     })();
-    return () => { canceled = true; };
-  }, [file, model]);
+    return () => controller.abort();
+  }, [file, release, model, origin, attempt]);
 
-  if (!file) return 'ready';
-  if (result?.file !== file || result.model !== model) return 'checking';
-  return result.valid ? 'ready' : 'invalid';
+  if (!file && !release) return { status: 'idle' };
+  if (!result || result.file !== file || result.release !== release || result.model !== model || result.attempt !== attempt) return { status: 'checking' };
+  if (release && result.status === 'invalid') return { ...result, retry: () => setAttempt(value => value + 1) };
+  return result;
 }
 
-export function LierdaFirmwarePicker({ board, releases, release, selection, setSelection, onModelChange, busy }) {
+export function LierdaFirmwarePicker({ board, boardName, releases, release, selection, setSelection, onModelChange, busy }) {
   return (
     <>
       <h2 id="firmware-title">{t('选择固件')}</h2>
@@ -66,27 +64,27 @@ export function LierdaFirmwarePicker({ board, releases, release, selection, setS
               value={origin}
               checked={selection.origin === origin}
               disabled={busy}
-              onChange={() => setSelection((current) => ({ ...current, origin, file: null }))}
+              onChange={() => setSelection((current) => ({ ...current, origin }))}
             />{' '}
             {label}
           </label>
         ))}
       </div>
       <div className="options">
-        {selection.origin === 'official' ? (
+        <label className="field span">
+          {t('开发板型号')}
+          <select
+            id="lierda-board"
+            value={board.slug}
+            disabled={busy}
+            onChange={(event) => onModelChange(lierdaBoardForLink(event.target.value).model)}
+          >
+            {lierdaBoards.map(({ slug }) => <option key={slug} value={slug}>{slug}</option>)}
+          </select>
+          <small>{t('开发板名称 · @0', t(boardName))}</small>
+        </label>
+        {selection.origin === 'official' && (
           <>
-            <label className="field span">
-              {t('开发板型号')}
-              <select
-                id="lierda-board"
-                value={selection.model}
-                disabled={busy}
-                onChange={(event) => onModelChange(event.target.value)}
-              >
-                {lierdaBoards.map(({ model, name }) => <option key={model} value={model}>{t(name)}</option>)}
-              </select>
-              <small>{t('按完整板卡型号选择固件。')}</small>
-            </label>
             <label className="field span">
               {t('固件版本')}
               <select
@@ -106,51 +104,59 @@ export function LierdaFirmwarePicker({ board, releases, release, selection, setS
                 )}
                 {releases?.map(({ version, recommended, prerelease }) => (
                   <option key={version} value={version}>
-                    {board.versionPrefix}{version}{prerelease ? t('（测试版）') : ''}{recommended ? t('（推荐）') : ''}
+                    {version}{prerelease ? t('（测试版）') : ''}{recommended ? t('（推荐）') : ''}
                   </option>
                 ))}
               </select>
-              {release && <small>{t('选择要写入的已发布版本。')}</small>}
             </label>
             {release && (
-              <p className="callout span" id="manifest">
-                {board.chip} · BINPKG · {board.model === 'pro-f9'
-                  ? t('仅写入 APP 应用区')
-                  : t('写入 BL、AP、CP 和 APP')}
+              <p className="callout span" id="manifest" title={release.source_filename}>
+                {release.filename}
               </p>
             )}
           </>
-        ) : (
-          <label className="field span">
-            {t('本地 BINPKG')}
-            <input
-              type="file"
-              id="lierda-binpkg"
-              accept=".binpkg"
-              disabled={busy}
-              onChange={(event) => {
-                const file = event.target.files[0] ?? null;
-                setSelection((current) => ({ ...current, origin: 'local', file }));
-              }}
-            />
-          </label>
         )}
+        <label className="field span" hidden={selection.origin !== 'local'}>
+          {t('本地 BINPKG')}
+          <input
+            type="file"
+            id="lierda-binpkg"
+            key={selection.model}
+            accept=".binpkg"
+            disabled={busy || Boolean(board.flashUnavailable)}
+            onChange={(event) => {
+              const file = event.target.files[0] ?? null;
+              setSelection((current) => ({ ...current, origin: 'local', file }));
+            }}
+          />
+        </label>
       </div>
     </>
   );
 }
 
 export function LierdaFlashSummary({ firmware }) {
+  const profile = firmware.targetDevice.lierdaProfile;
+  const { mode, eraseRanges } = firmware.writePlan;
+  const offset = (value) => '0x' + value.toString(16).padStart(6, '0').toUpperCase();
   return (
     <dl className="flash-summary">
       <div><dt>{t('目标芯片')}</dt><dd>{firmware.chip}</dd></div>
       <div><dt>{t('目标开发板')}</dt><dd>{t(firmware.boardModel)}</dd></div>
       <div><dt>{t('固件包')}</dt><dd>{firmware.filename}</dd></div>
+      <div><dt>{t('写入前备份')}</dt><dd>{t('全部内部 Flash（@0 MiB）', profile.size / 0x100000)}</dd></div>
+      <div>
+        <dt>{t('擦除范围（内部 Flash 偏移）')}</dt>
+        <dd>{eraseRanges.map(({ start, end }) => (
+          <div key={start}><code>{offset(start)}–{offset(end - 1)}</code></div>
+        ))}</dd>
+      </div>
       <div>
         <dt>{t('写入范围')}</dt>
         <dd>
-          {firmware.model === 'pro-f9'
-            ? t('APP 应用区，保留其余分区。')
+          {mode === 'reinstall'
+            ? t('将重装底包和 APP，清空应用文件系统。设备绑定、设置及内部文件将丢失。保留并校验出厂数据及校准区。')
+            : mode === 'app' ? t('APP 应用区，保留其余分区。')
             : t('BL、AP、CP 和 APP。可能清除绑定、设置和内部文件。')}
         </dd>
       </div>

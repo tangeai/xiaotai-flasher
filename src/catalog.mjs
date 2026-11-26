@@ -1,6 +1,6 @@
 import { LocalizedError, t, localizedMessage } from './i18n.mjs';
 import { chips } from './chips.mjs';
-import { lierdaBoards } from './lierda-boards.mjs';
+import { lierdaBoardForLink, lierdaBoards, lierdaPackageSizeLimit, lierdaReleaseFilename } from './lierda-boards.mjs';
 
 const versionDigest = /^[a-f0-9]{64}$/i;
 const boardSlug = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -36,10 +36,10 @@ export function publishedBoards(data, catalogURL) {
     throw new LocalizedError('固件配置必须包含 boards 数组。');
   const slugs = new Set();
   return data.boards.flatMap((board) => {
-    const hardware = lierdaBoards.find(({ slug }) => slug === board?.slug);
+    const hardware = lierdaBoardForLink(board?.slug);
     if (hardware) {
       // An invalid BINPKG entry must never hide another platform's catalog.
-      if (data.boards.filter((candidate) => candidate?.slug === hardware.slug).length !== 1) return [];
+      if (data.boards.filter(candidate => lierdaBoardForLink(candidate?.slug) === hardware).length !== 1) return [];
       const entry = publishedLierdaBoard(board, hardware, catalogURL);
       return entry ? [entry] : [];
     }
@@ -125,13 +125,12 @@ function publishedLierdaBoard(board, hardware, catalogURL) {
     if (typeof version !== 'string' || !numericVersion.test(version) || seen.has(version) ||
         typeof sha256 !== 'string' || !versionDigest.test(sha256) ||
         typeof filename !== 'string' || !packageName.test(filename) ||
-        !Number.isSafeInteger(bytes) || bytes <= 0 || bytes > hardware.flashBytes + 0x10000 ||
+        !Number.isSafeInteger(bytes) || bytes <= 0 || bytes > lierdaPackageSizeLimit(hardware) ||
         (release.recommended !== undefined && typeof release.recommended !== 'boolean')) return null;
-    const prefix = hardware.slug.slice('lierda-'.length);
-    const path = `./firmware/${prefix}-v${version}-${sha256.toLowerCase()}.binpkg`;
+    const path = `./firmware/${hardware.firmwareKey}-v${version}-${sha256.toLowerCase()}.binpkg`;
     if (release.bin_url !== path) return null;
     seen.add(version);
-    versions.push({ ...release, filename, bin_url: linkedURL(path, catalogURL).href });
+    versions.push({ ...release, filename: lierdaReleaseFilename(hardware, version), bin_url: linkedURL(path, catalogURL).href });
   }
   if (versions.filter((release) => release.recommended).length > 1) return null;
   return { slug: hardware.slug, model: board.model.trim(), chip: hardware.chip, flashBytes: hardware.flashBytes, versions };
