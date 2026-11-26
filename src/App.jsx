@@ -10,7 +10,6 @@ import { lierdaBoards, prepareLierdaFirmware } from './lierda-firmware.mjs';
 import { lierdaBoardForLink } from './lierda-boards.mjs';
 import { getLierdaFlashPlan } from './lierda-package.mjs';
 import {
-  initialLierdaSelection,
   LierdaFirmwarePicker,
   LierdaFlashSummary,
   matchesLierdaDevice,
@@ -892,9 +891,7 @@ export function App() {
   );
   const [originChoice, setOrigin] = useState(requestedLierdaBoard ? null : 'local');
   const [chosenGroup, setGroup] = useState(requestedLierdaBoard ? 'lierda' : 'esp32');
-  const [lierdaChoice, setLierdaChoice] = useState(() =>
-    initialLierdaSelection(requestedLierdaBoard),
-  );
+  const [lierdaChoice, setLierdaChoice] = useState({ versions: {}, origin: 'official', file: null });
   const [selection, setSelection] = useState(() => ({
     slug: requestedLierdaBoard?.slug ?? '',
     version: '',
@@ -906,17 +903,12 @@ export function App() {
   const groups = hasCatalog ? catalog.platforms : localPlatforms;
   const group = groups.has(chosenGroup) ? chosenGroup : groups.keys().next().value;
   const onlineBoards = catalog.boards.filter(board => board.platform === group);
-  const includeLocalLierda = lierdaChoice.origin === 'local' && onlineBoards.some(board => lierdaBoardForLink(board.slug));
-  const missingLierdaBoards = includeLocalLierda
-    ? offlineLierdaBoards.filter(board => !catalog.boards.some(entry => entry.slug === board.slug)) : [];
-  const platformBoards = hasCatalog ? [...onlineBoards, ...missingLierdaBoards]
+  const platformBoards = hasCatalog ? onlineBoards
     : group === 'lierda' ? offlineLierdaBoards : [];
   const board = platformBoards.find(candidate => candidate.slug === selection.slug) ?? platformBoards[0];
   const protocol = board ? flashProtocol(board) : hasCatalog ? null : group;
   const lierda = protocol === 'lierda';
   const lierdaBoard = lierdaBoardForLink(board?.slug);
-  const lierdaBoardName = board?.model;
-  const lierdaSelection = { ...lierdaChoice, model: lierdaBoard?.model };
   const lierdaReleases = catalog.loading ? undefined : catalog.unavailable ? null : board?.versions;
   const lierdaRelease = lierdaReleases?.find(({ version }) => version === lierdaChoice.versions[lierdaBoard?.model])
     ?? lierdaReleases?.find(({ recommended }) => recommended)
@@ -954,9 +946,12 @@ export function App() {
     serialAvailable,
   } = workbench;
   const detectedLierdaBoard = lierdaBoards.find((board) => matchesLierdaDevice(board, device));
-  const localPackage = lierdaSelection.origin === 'local';
-  const lierdaPreflight = useLierdaPreflight(lierdaSelection, lierda && !lierdaBoard.flashUnavailable,
-    detectedLierdaBoard === lierdaBoard ? lierdaRelease : null);
+  const localPackage = lierdaChoice.origin === 'local';
+  const targetBoard = localPackage ? detectedLierdaBoard : lierdaBoard;
+  const lierdaSelection = { ...lierdaChoice, model: targetBoard?.model };
+  const lierdaPreflight = useLierdaPreflight(lierdaSelection,
+    lierda && Boolean(targetBoard) && targetBoard === detectedLierdaBoard && !targetBoard.flashUnavailable,
+    lierdaRelease);
   const pendingLierdaMismatch = pending?.kind === 'lierda' &&
     (pending.targetDevice !== device || !matchesLierdaDevice(pending, device));
 
@@ -1008,12 +1003,10 @@ export function App() {
   useEffect(() => {
     if (!detectedLierdaBoard) return;
     const detected = catalog.boards.find(entry => entry.slug === detectedLierdaBoard.slug);
-    if (catalog.boards.length && !detected && lierdaChoice.origin !== 'local') return;
+    if (catalog.boards.length && !detected) return;
     if (detected) setGroup(detected.platform);
     setSelection(current => ({ ...current, slug: detectedLierdaBoard.slug }));
-    setLierdaChoice(current => current.model === detectedLierdaBoard.model ? current :
-      { ...current, model: detectedLierdaBoard.model, file: null });
-  }, [detectedLierdaBoard, catalog.boards, lierdaChoice.origin]);
+  }, [detectedLierdaBoard, catalog.boards]);
 
   useEffect(() => {
     const changed = () => setFullscreen(Boolean(document.fullscreenElement));
@@ -1038,10 +1031,12 @@ export function App() {
   }
 
   function changeBoard(next) {
-    if (flashProtocol(next) !== protocol) workbench.resetForPlatform();
+    if (flashProtocol(next) !== protocol) {
+      workbench.resetForPlatform();
+      setLierdaChoice(current => ({ ...current, file: null }));
+    }
     changeSelection({ slug: next.slug, version: recommendedVersion(next), merged: null,
       segmented: false, segments: [newSegment()] });
-    setLierdaChoice(current => ({ ...current, model: lierdaBoardForLink(next.slug)?.model, file: null }));
   }
 
   function changeSetting(key, value) {
@@ -1064,7 +1059,7 @@ export function App() {
     userSelected.current = true;
     setGroup(value);
     changeSelection({ slug: '', version: '', merged: null, segmented: false, segments: [newSegment()] });
-    setLierdaChoice(current => ({ ...current, model: undefined, file: null }));
+    setLierdaChoice(current => ({ ...current, file: null }));
     workbench.resetForPlatform();
     workbench.setTab('log');
   }
@@ -1075,12 +1070,12 @@ export function App() {
   else if (!serialAvailable)
     readinessMessage = t('请在桌面 Chrome 或 Edge 中打开 HTTPS 烧录页。');
   else if (lierda) {
-    if (lierdaBoard.flashUnavailable) {
-      readinessMessage = t(lierdaBoard.flashUnavailable);
+    if (targetBoard?.flashUnavailable) {
+      readinessMessage = t(targetBoard.flashUnavailable);
     } else if (device?.lierdaCompatibilityIssue) {
       readinessMessage = t(device.lierdaCompatibilityIssue);
-    } else if (device && detectedLierdaBoard !== lierdaBoard) {
-      readinessMessage = detectedLierdaBoard && detectedLierdaBoard !== lierdaBoard
+    } else if (device && (!detectedLierdaBoard || detectedLierdaBoard !== targetBoard)) {
+      readinessMessage = detectedLierdaBoard && detectedLierdaBoard !== targetBoard
         ? t('已连接 @0，请选择对应板型。', t(detectedLierdaBoard.name))
         : t('设备芯片或 Flash 容量与所选板型不匹配。');
     } else if (lierdaPreflight.status === 'checking') {
@@ -1089,7 +1084,7 @@ export function App() {
       readinessMessage = t(lierdaPreflight.error);
     } else if (!device) {
       readinessMessage = localPackage && lierdaSelection.file
-        ? t('固件包已通过校验。连接设备后将核对板型和底包。')
+        ? t('已选择固件包。连接设备后将按识别到的板型校验。')
         : t('先连接设备，再选择固件。');
     } else {
       try {
@@ -1098,7 +1093,7 @@ export function App() {
           device.capacity,
         );
         const writePlan = getLierdaFlashPlan(device.lierdaProfile, lierdaPreflight.profile);
-        ready = { ...firmware, boardModel: lierdaBoardName, targetDevice: device, writePlan, input: lierdaPreflight.input };
+        ready = { ...firmware, boardModel: localPackage ? targetBoard.name : board.model, targetDevice: device, writePlan, input: lierdaPreflight.input };
         readinessMessage = t('固件已就绪。');
       } catch (error) {
         readinessMessage = error.message;
@@ -1366,6 +1361,7 @@ export function App() {
             <div className="flash-settings">
               {lierda ? (
                 <LierdaFirmwarePicker
+                  key={`firmware-${group}`}
                   board={lierdaBoard}
                   boardPicker={boardPicker}
                   releases={lierdaReleases}
@@ -1376,7 +1372,7 @@ export function App() {
                 />
               ) : (
                 <FirmwarePicker
-                  key={group}
+                  key={`firmware-${group}`}
                   supported={Boolean(protocol)}
                   boardPicker={boardPicker}
                   catalog={{ ...catalog, boards: platformBoards }}

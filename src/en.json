@@ -23,7 +23,7 @@
   "写入前备份": "Backup before writing",
   "全部内部 Flash（@0 MiB）": "All internal flash (@0 MiB)",
   "擦除范围（内部 Flash 偏移）": "Erase ranges (internal flash offsets)",
-  "固件包已通过校验。连接设备后将核对板型和底包。": "Firmware package validated. Connect the device to check its board and base firmware.",
+  "已选择固件包。连接设备后将按识别到的板型校验。": "Firmware package selected. Connect the device to validate it against the detected board.",
   "请选择利尔达开发板型号。": "Select a Lierda board model.",
   "请提供 NT26F6D0 Pro 的完整 BINPKG。": "Select a complete BINPKG for NT26F6D0 Pro.",
   "NT26F6D0 Pro 需要包含 BL、AP、CP、APP 和 ext_lfs 的完整固件包。": "NT26F6D0 Pro requires a complete firmware package containing BL, AP, CP, APP and ext_lfs.",

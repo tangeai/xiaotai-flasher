@@ -1,16 +1,7 @@
 import { LocalizedError, localizedMessage, t } from './i18n.mjs';
 import { useEffect, useState } from 'react';
-import { lierdaBoards, resolveLierdaFirmware } from './lierda-firmware.mjs';
+import { resolveLierdaFirmware } from './lierda-firmware.mjs';
 import { parseLierdaPackage } from './lierda-package.mjs';
-
-export function initialLierdaSelection(board) {
-  return {
-    model: (board ?? lierdaBoards[0]).model,
-    versions: {},
-    origin: 'official',
-    file: null,
-  };
-}
 
 export function matchesLierdaDevice({ model, chip, flashBytes }, device) {
   return device?.lierdaModel === model && device.chip === chip && device.capacity === flashBytes;
@@ -70,9 +61,9 @@ export function LierdaFirmwarePicker({ board, boardPicker, releases, release, se
         ))}
       </div>
       <div className="options">
-        {boardPicker}
         {selection.origin === 'official' && (
           <>
+            {boardPicker}
             <label className="field span">
               {t('固件版本')}
               <select
@@ -109,12 +100,11 @@ export function LierdaFirmwarePicker({ board, boardPicker, releases, release, se
           <input
             type="file"
             id="lierda-binpkg"
-            key={selection.model}
             accept=".binpkg"
-            disabled={busy || Boolean(board.flashUnavailable)}
+            disabled={busy}
             onChange={(event) => {
               const file = event.target.files[0] ?? null;
-              setSelection((current) => ({ ...current, model: board.model, origin: 'local', file }));
+              setSelection((current) => ({ ...current, origin: 'local', file }));
             }}
           />
         </label>
