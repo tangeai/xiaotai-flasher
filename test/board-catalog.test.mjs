@@ -113,3 +113,21 @@ test('the CoreS3-Lite display variant resolves to the same catalog board', () =>
   assert.equal(boards[0].slug, 'm5stack-cores3-lite');
   assert.ok(boards[0].releases.some((release) => release.bin_url.includes('_ili9342c_')));
 });
+
+test('loads dated firmware snapshots with screen-size slugs and canonical BINPKG paths', () => {
+  const url = 'https://example.com/boards-2026-11-27.json';
+  const hardware = lierdaBoards[0];
+  const bin_url = './firmware/v1.0.0_' + hardware.slug + '.binpkg';
+  const release = { status: 'published', version: '1.0.0', sha256: 'a'.repeat(64), byte_length: 32,
+    source_filename: '2026_11_21_16_05_10_lite.binpkg', bin_url };
+  const boards = [
+    ...['waveshare-p4-3.5', 'waveshare-p4-4.3'].map(slug =>
+      ({ platform: 'esp32', slug, model: slug, chip: 'ESP32-P4', releases: [] })),
+    { platform: 'lierda', model: hardware.name, chip: hardware.chip, slug: hardware.slug,
+      flash_bytes: hardware.flashBytes, modem: hardware.modem, modempkg: hardware.modempkg, releases: [release] },
+  ];
+  const platforms = ['esp32', 'lierda'].map(platform => ({ platform, platform_name: platform }));
+  const published = publishedBoards({ platforms, boards }, url);
+  assert.deepEqual(published.map(board => board.slug), boards.map(board => board.slug));
+  assert.equal(published[2].versions[0].bin_url, new URL(bin_url, url).href);
+});

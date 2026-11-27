@@ -79,6 +79,8 @@ ESP32 完整 BIN 写入前会检查启动镜像、分区表及对应芯片的应
 
 源码自带空目录，可直接导入本地固件。通过安装脚本部署后，修改部署根目录下的 `boards-source.json` 并执行 `update`。独立静态托管时，可直接修改站点中的 `boards-source.json`。
 
+本地按板型命名规则同步三个仓库的 Release，可运行 `python3 scripts/sync_firmware.py`。详见[本地固件目录同步规则](docs/firmware-sync.md)。
+
 ### 手动上传新固件
 
 如果旧部署没有固件目录，先运行 `sudo mkdir -p /opt/xiaotai-flasher/board-catalog/firmware`。

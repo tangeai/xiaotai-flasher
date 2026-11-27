@@ -4,6 +4,7 @@ import { lierdaBoardForLink, lierdaPackageSizeLimit, lierdaReleaseFilename } fro
 
 const versionDigest = /^[a-f0-9]{64}$/i;
 const boardSlug = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const displayBoardSlug = slug => boardSlug.test(slug) || ['waveshare-p4-3.5', 'waveshare-p4-4.3'].includes(slug);
 const releaseStates = new Set(['draft', 'published', 'offline']);
 const packageName = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,249}\.binpkg$/i;
 const numericVersion = /^(?:0|[1-9]\d{0,8})\.(?:0|[1-9]\d{0,8})\.(?:0|[1-9]\d{0,8})$/;
@@ -68,7 +69,7 @@ function parseBoards(data, catalogURL, definitions) {
     }
     if (
       typeof board?.slug !== 'string' ||
-      !boardSlug.test(board.slug) ||
+      !displayBoardSlug(board.slug) ||
       slugs.has(board.slug) ||
       typeof board.model !== 'string' ||
       !board.model.trim() ||
@@ -150,7 +151,8 @@ function publishedLierdaBoard(board, hardware, catalogURL) {
         (release.recommended !== undefined && typeof release.recommended !== 'boolean')) return null;
     const releaseFilename = lierdaReleaseFilename(hardware, version);
     const digestPath = `./firmware/${hardware.firmwareKey}-v${version}-${sha256.toLowerCase()}.binpkg`;
-    if (release.bin_url !== digestPath && release.bin_url !== './firmware/' + releaseFilename) return null;
+    const canonicalPath = `./firmware/v${version}_${hardware.slug}.binpkg`;
+    if (![digestPath, './firmware/' + releaseFilename, canonicalPath].includes(release.bin_url)) return null;
     seen.add(version);
     versions.push({ ...release, filename: releaseFilename, bin_url: linkedURL(release.bin_url, catalogURL).href });
   }
