@@ -94,6 +94,10 @@ class FirmwareSyncTests(unittest.TestCase):
             self.assertEqual(saved["source_url"], "https://github.com/tangeai/xiaotai-esp32/releases/download/xmini-c3-v3-app-v0.1.0/" + name)
             self.assertEqual(saved["bin_url"], "./firmware/v0.1.0_xmini-esp32c3_merged.bin")
             self.assertEqual((root / saved["bin_url"]).read_bytes(), DATA)
+            (root / "boards.json").write_bytes(snapshot.read_bytes())
+            (root / saved["bin_url"]).unlink()
+            self.assertEqual(sync.sync(root, lambda repo: []), snapshot)
+            self.assertEqual((root / saved["bin_url"]).read_bytes(), DATA)
             file.unlink()
             self.assertEqual(sync.sync(root, lambda repo: []), snapshot)
 
@@ -121,6 +125,31 @@ class FirmwareSyncTests(unittest.TestCase):
             network.reset_mock()
             self.assertEqual(sync.sync(root, releases_for), snapshot)
             network.assert_not_called()
+
+    def test_failed_download_preserves_snapshot_and_can_be_retried(self):
+        repo = sync.REPOS[0]
+        tag = "v1.2.3"
+        name = tag + "_qiming-esp32p4_merged.bin"
+        def releases(source):
+            return [release(repo, tag, name)] if source == repo else []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "boards.json"
+            source.write_text('{"boards":[]}')
+            previous = root / "boards-2026-01-01T00-00-00.000000Z.json"
+            previous.write_bytes(source.read_bytes())
+            for payload, error in [(b"", sync.IncompleteRead), (b"x" * len(DATA), ValueError)]:
+                with self.subTest(payload=payload), patch.object(sync, "fetch", lambda url, consume: consume(BytesIO(payload))):
+                    with self.assertRaises(error):
+                        sync.sync(root, releases)
+                    self.assertEqual(previous.read_bytes(), source.read_bytes())
+                    self.assertEqual(list(root.glob("boards-*.json")), [previous])
+                    self.assertEqual(list((root / "firmware").iterdir()), [])
+            with patch.object(sync, "fetch", lambda url, consume: consume(BytesIO(DATA))):
+                snapshot = sync.sync(root, releases)
+            self.assertNotEqual(previous, snapshot)
+            self.assertEqual((root / "firmware" / name).read_bytes(), DATA)
 
     def test_snapshot_priority_cache_and_failure(self):
         with tempfile.TemporaryDirectory() as tmp:

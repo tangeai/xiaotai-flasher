@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from http.client import IncompleteRead
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 REPOS = ("tangeai/xiaotai-esp32", "tangeai/xiaotai", "tangeai/xiaotai-lierda")
@@ -227,6 +227,7 @@ def mirror(image, previous, firmware, stage):
 def restore_archived_board(board, entries, firmware, stage):
     """Recover a catalogued C3 full image when upstream no longer lists the board."""
     releases = []
+    restored = 0
     for digest, old in entries.items():
         name = Path(old["bin_url"]).name
         identity = identify(REPOS[0], {"tag_name": ""}, name)
@@ -234,9 +235,15 @@ def restore_archived_board(board, entries, firmware, stage):
             continue
         filename = f"v{identity[1]}_{board.slug}{board.suffix}"
         target = firmware / filename
-        candidates = [target, firmware / name]
+        names = [name]
+        original = Path(urlsplit(old.get("source_url") or "").path).name
+        if original and original != name and identify(REPOS[0], {"tag_name": ""}, original) == identity:
+            names.append(original)
+        candidates = [target]
         archives = firmware.parent.parent / "releases"
-        candidates.extend(sorted(archives.glob("**/firmware/" + name)))
+        for candidate_name in names:
+            candidates.append(firmware / candidate_name)
+            candidates.extend(sorted(archives.glob("**/firmware/" + candidate_name)))
         for path in candidates:
             if not path.is_file():
                 continue
@@ -254,6 +261,7 @@ def restore_archived_board(board, entries, firmware, stage):
                     raise ValueError(f"归档复制校验失败：{path}")
                 try:
                     os.link(ready, target)
+                    restored += 1
                 except FileExistsError:
                     if not verified(target, image):
                         raise ValueError(f"同名文件冲突：{target}")
@@ -266,7 +274,7 @@ def restore_archived_board(board, entries, firmware, stage):
             break
         else:
             print(f"找不到通过校验的本地归档 {name}", file=sys.stderr)
-    return releases
+    return releases, restored
 
 
 def sync(directory, releases_for=list_releases):
@@ -319,7 +327,8 @@ def sync(directory, releases_for=list_releases):
         for slug in ("xmini-esp32c3", "sibo-esp32c3"):
             row = boards.get(slug)
             if row and not row["releases"]:
-                row["releases"] = restore_archived_board(BY_NAME[slug], history[slug], firmware, stage)
+                row["releases"], recovered = restore_archived_board(BY_NAME[slug], history[slug], firmware, stage)
+                restored += recovered
         count = sum(len(row["releases"]) for row in boards.values())
         if not count:
             raise ValueError("没有匹配的固件。")
