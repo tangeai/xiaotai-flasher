@@ -5,10 +5,12 @@ import { createAtReplyReader, encodeSerialCommand } from './serial-command.mjs';
 import { startSerialRecording } from './serial-recording.mjs';
 import { downloadFirmware } from './catalog.mjs';
 import { loadLierdaAgentBoot } from './lierda-agentboot.mjs';
+import { lierdaBoards } from './lierda-boards.mjs';
 import {
   isDownloadPort, selectLierdaPort, selectLierdaDownloadPort,
   chooseLierdaDownloadPort, deferredSerialResult, requestLierdaDownloadMode, USB_BAUD, waitForSerialOperation,
 } from './lierda-serial.mjs';
+import { pmProRecoveryStore } from './lierda-recovery.mjs';
 import { persistLierdaFlashBackup } from './lierda-workflow.mjs';
 import {
   isKnownUartBridge,
@@ -373,20 +375,22 @@ export function useWorkbench() {
       openingDownloadPort = true;
       appendLog('flashLog', t('正在连接 QDLoader · @0 波特\n', baudrate));
       const { connectLierda: connectDevice } = await import('./lierda.mjs');
-      const session = await connectDevice(port, { ...options, agent, signal }, line => appendLog('flashLog', line));
+      const session = await connectDevice(port, { ...options, agent, signal, recovery: pmProRecoveryStore }, line => appendLog('flashLog', line));
       if (signal.aborted) {
         await session.close().catch(() => {});
         signal.throwIfAborted();
       }
       flash.current = { port, session, platform: 'lierda', abort: new AbortController() };
       retryPort.current = null;
-      lierdaBackup.current = null;
-      update({ device: session, canReconnect: false, flashBackup: null });
-      if (session.lierdaCompatibilityIssue) {
-        flashStatus('已连接 · 利尔达下载口');
+      lierdaBackup.current = session.lierdaRecoveryBackup ?? null;
+      update({ device: session, canReconnect: false, flashBackup: lierdaBackup.current?.name ?? null });
+      const board = lierdaBoards.find(entry => entry.model === session.lierdaModel);
+      if (session.lierdaRecoveryPackageSha) {
+        flashStatus('已连接 · PM Pro 续刷，请选择上次中断的完整固件包。');
+      } else if (board) {
+        flashStatus(localizedMessage('已连接 · @0 · 内部 Flash @1', localizedMessage(board.name), session.capacityLabel));
       } else {
-        const model = session.lierdaModel === 'pro-f9' ? 'NT26F9D0' : 'NT26F6D0';
-        flashStatus(localizedMessage('已连接 · @0 · @1 · Flash @2', model, session.chip, session.capacityLabel));
+        flashStatus('已连接 · 利尔达下载口');
       }
     }, (message, error) => {
       if (!signal.aborted && error.name === 'NotFoundError') {
@@ -550,11 +554,15 @@ export function useWorkbench() {
             progress(message, percent);
           },
           log: line => appendLog('flashLog', line + '\n'),
+          onRecoveredBackup(backup) {
+            lierdaBackup.current = backup;
+            update({ flashBackup: backup.name });
+          },
           async saveBackup(bytes, digest) {
             const backup = await persistLierdaFlashBackup(bytes, digest, firmware.model);
             lierdaBackup.current = backup;
             update({ flashBackup: backup.name });
-            return backup.location;
+            return backup;
           },
         });
         abort.signal.throwIfAborted();

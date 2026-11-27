@@ -48,6 +48,37 @@ function populateBootPage(memory, page, id, image, imageSha) {
   header.copy(memory, page);
 }
 
+function firmwarePackage(model, product, images, pinnedHashes) {
+  const metadata = Buffer.alloc(52 + 280);
+  metadata.write('111\0\0\0\0\0bpkg');
+  metadata.writeUInt32LE(images.length, 16);
+  metadata.write('SHA256', 20);
+  metadata.writeUInt16LE(2, 28);
+  metadata.writeUInt16LE(280, 30);
+  metadata.writeUInt32LE(1, 52);
+  metadata.write('pkgmode', 56);
+  metadata.writeUInt32LE(1, 120);
+  metadata.writeUInt32LE(2, 192);
+  metadata.write('productname', 196);
+  metadata.write(product, 260);
+  const chunks = [metadata];
+  let offset = metadata.length;
+  for (const { name, type, start, storageAddress, capacity, bytes } of images) {
+    const header = Buffer.alloc(364);
+    header.write(name);
+    header.writeUInt32LE(storageAddress ?? xip + start, 64);
+    header.writeUInt32LE(capacity ?? bytes.length, 68);
+    header.writeUInt32LE(offset, 72);
+    header.writeUInt32LE(bytes.length, 76);
+    header.write(pinnedHashes.get(sha(bytes)) ?? sha(bytes), 80);
+    header.write(type, 336);
+    chunks.push(header, bytes);
+    offset += header.length + bytes.length;
+  }
+  const bytes = Buffer.concat(chunks);
+  return { model, stage: 'app', bytes, sha256: sha(bytes) };
+}
+
 // Use deterministic stand-ins for the vendor binaries.
 // Only their exact full-image and detection-sample digests get a pinned identity.
 export function makeHmFixture(version, pinnedHashes) {
@@ -76,36 +107,9 @@ export function makeHmFixture(version, pinnedHashes) {
   }
 
   function firmware(headerLayout = layout) {
-    const metadata = Buffer.alloc(52 + 280);
-    metadata.write('111\0\0\0\0\0bpkg');
-    metadata.writeUInt32LE(4, 16);
-    metadata.write('SHA256', 20);
-    metadata.writeUInt16LE(2, 28);
-    metadata.writeUInt16LE(280, 30);
-    metadata.writeUInt32LE(1, 52);
-    metadata.write('pkgmode', 56);
-    metadata.writeUInt32LE(1, 120);
-    metadata.writeUInt32LE(2, 192);
-    metadata.write('productname', 196);
-    metadata.write('EC718HM_PRD', 260);
-    const chunks = [metadata];
-    let offset = metadata.length;
     const app = { name: 'TiRTC_pro_NT26F9D0', type: 'PKGFLXAPP', start: layout.appStart,
       capacity: 0x2b4000, bytes: application(headerLayout) };
-    for (const { name, type, start, capacity, bytes } of [...bases, app]) {
-      const header = Buffer.alloc(364);
-      header.write(name);
-      header.writeUInt32LE(xip + start, 64);
-      header.writeUInt32LE(capacity ?? bytes.length, 68);
-      header.writeUInt32LE(offset, 72);
-      header.writeUInt32LE(bytes.length, 76);
-      header.write(pinnedHashes.get(sha(bytes)) ?? sha(bytes), 80);
-      header.write(type, 336);
-      chunks.push(header, bytes);
-      offset += header.length + bytes.length;
-    }
-    const bytes = Buffer.concat(chunks);
-    return { model: 'pro-f9', stage: 'app', bytes, sha256: sha(bytes) };
+    return firmwarePackage('pro-f9', 'EC718HM_PRD', [...bases, app], pinnedHashes);
   }
 
   const memory = Buffer.alloc(0x800000, 0x5b);
@@ -117,7 +121,55 @@ export function makeHmFixture(version, pinnedHashes) {
   return { layout, memory, firmware, app, bases };
 }
 
-export function simulateHmFlash(memory, { onImageWritten } = {}) {
+export function populatePmSdkEntry(bytes, start, model) {
+  const relative = model === 'pro-pm' ? 0x148 : 0x150;
+  const base = xip + 0x2a6000;
+  const version = model === 'pro-pm' ? 'V1.7.0_appVpro_release' : 'V1.7.0_appVlite_ai_1.1.4_20261121';
+  const main = Buffer.from('08b500f055f800f047f80548abf0aefa0448abf033fabde8084000f013b800bf0000000000000000', 'hex');
+  main.writeUInt32LE(base + 0x3000, 0x20);
+  main.writeUInt32LE(base + relative + 0x29, 0x24);
+  bytes.writeUInt32LE(base + relative + 1, start + 4);
+  main.copy(bytes, start + relative);
+  bytes.write(version + '\0', start + 0x3000);
+}
+
+export function makePmFixture(profile, pinnedHashes) {
+  const memory = Buffer.alloc(profile.size, 0x5b);
+  const bases = profile.baseImages.map(({ name, role, address, capacity, digest, sampleSha }, index) => {
+    const bytes = Buffer.alloc(capacity, 0x41 + index);
+    const offset = role === 'BL' ? 0x100 : 0;
+    pinnedHashes.set(sha(bytes), digest);
+    pinnedHashes.set(sha(bytes.subarray(offset, offset + 240)), sampleSha);
+    bytes.copy(memory, address);
+    return { name, type: role, start: address, bytes };
+  });
+  populateBootPage(memory, 0, 0x4f424d49, bases[0], profile.baseImages[0].digest);
+  populateBootPage(memory, 0x1000, 0x444b4249, bases[1], profile.baseImages[1].digest);
+  const app = Buffer.alloc(0x10400, 0x71);
+  app.write('app0');
+  app.writeUInt32LE(profile.app.fsStart, 16);
+  app.writeUInt32LE(profile.app.fsSize, 20);
+  populatePmSdkEntry(app, 0, profile.model);
+  app.copy(memory, profile.app.address, 0, 0x3080);
+  const images = [...bases, { name: profile.app.name, type: 'PKGFLXAPP',
+    start: profile.app.address, capacity: profile.app.capacity, bytes: app }];
+  let resource;
+  let external;
+  if (profile.externalSize) {
+    external = Buffer.alloc(profile.externalSize, 0xac);
+    // Distinguish each block so duplicated or incorrect offsets are detectable.
+    resource = Buffer.alloc(external.length);
+    for (let offset = 0; offset < resource.length; offset += 0x10000) {
+      resource.fill(offset / 0x10000, offset, offset + 0x10000);
+    }
+    resource.write('littlefs', 8);
+    images.push({ name: 'ext_lfs', type: 'EFID01', storageAddress: 0x80000000, bytes: resource });
+  }
+  return { memory, external, resource, app, firmware: firmwarePackage(profile.model, profile.product, images, pinnedHashes) };
+}
+
+export function simulateHmFlash(memory, { onImageWritten, external, uid } = {}) {
+  let target = memory;
   let programming = false;
   let selectedId;
   let imageId;
@@ -127,13 +179,14 @@ export function simulateHmFlash(memory, { onImageWritten } = {}) {
   const erased = [];
   const prepared = [];
   const written = [];
+  const externalWritten = [];
   function word(value) {
     const bytes = Buffer.alloc(4);
     bytes.writeUInt32LE(value);
     return bytes;
   }
   return {
-    erased, prepared, written,
+    erased, prepared, written, externalWritten,
     get programming() { return programming; },
     markBackupSaved() { saved = true; },
     reply(frame) {
@@ -150,7 +203,31 @@ export function simulateHmFlash(memory, { onImageWritten } = {}) {
           assert.equal(length, 0x1000);
           erased.push(start);
           memory.fill(0xff, start, start + length);
+        } else if (code === 0x25 && uid) {
+          assert.equal(data.toString('hex'), '01e0');
+          return uid;
+        } else if (code === 0x24 && external) {
+          assert.equal(data.readUInt32LE(), 1);
+          assert.equal(data.subarray(15, 21).toString(), 'EFID01');
+          const start = data.readUInt32LE(4);
+          assert.equal(start % 0x10000, 0);
+          assert.ok(start + 0x10000 <= external.length);
+          return external.subarray(start, start + 0x10000);
+        } else if (code === 0xe0 && external) {
+          const command = data.readUInt32LE();
+          if (command === 0x101) return word(1);
+          assert.equal(command, 0x142);
+          assert.ok(saved, 'external write before backup confirmation');
+          assert.equal(data.subarray(10, 16).toString(), 'EFID01');
+          assert.equal(data.readUInt32LE(29), 0x80000000);
+          assert.equal(data.readUInt32LE(33), 0);
+          assert.equal(data.readUInt32LE(37), external.length);
+          target = external;
+          imageId = data.readUInt32LE(25);
+          programming = true;
+          selectedId = headId;
         } else if (code === 0x42) {
+          target = memory;
           imageId = data.readUInt32LE();
           prepared.push(imageId);
           programming = true;
@@ -162,7 +239,7 @@ export function simulateHmFlash(memory, { onImageWritten } = {}) {
             memory.fill(0xff, page, page + 0x1000);
             imageHeader.copy(memory, page);
           }
-          onImageWritten?.(imageId);
+          onImageWritten?.(imageId, target);
           return word(0);
         } else if (code === 0xaa) {
           return Buffer.from('5a7a5a7a5a7a5a7a', 'hex');
@@ -180,9 +257,10 @@ export function simulateHmFlash(memory, { onImageWritten } = {}) {
               imageHeader = Buffer.from(data);
               cursor = data.readUInt32LE(68);
             } else {
-              assert.ok(cursor + data.length <= memory.length);
-              written.push({ start: cursor, length: data.length });
-              data.copy(memory, cursor);
+              assert.ok(cursor + data.length <= target.length);
+              const chunks = target === memory ? written : externalWritten;
+              chunks.push({ start: cursor, length: data.length });
+              data.copy(target, cursor);
               cursor += data.length;
             }
             break;

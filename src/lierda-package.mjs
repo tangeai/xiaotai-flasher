@@ -1,5 +1,6 @@
 import { LocalizedError, localizedMessage } from './i18n.mjs';
 import { lierdaBoards, lierdaPackageSizeLimit } from './lierda-boards.mjs';
+import { readPmApplicationModel } from './lierda-pm-identity.mjs';
 
 const flashBase = 0x00800000;
 const flashSize = 0x00400000;
@@ -37,7 +38,11 @@ const ec718hmBaseImages = [
     sampleSha: '53bd8180c6ab918866c835f63c626a33ded3559fe6ac2a8fd90c660aa058bba7' },
 ];
 const liteApplication = Object.freeze({
-  name: 'TiRTC_lite_NT26F6D0', address: 0x2a6000, capacity: 0x0cb000, fsStart: 0x371000, fsSize: 0x73000,
+  name: 'TiRTC_lite_NT26F6D0', aliases: ['TiRTC_Lite_AI_NT26F6D0'],
+  address: 0x2a6000, capacity: 0x0cb000, fsStart: 0x371000, fsSize: 0x73000,
+});
+const pmLargeLayout = Object.freeze({
+  address: 0x2a6000, capacity: 0x116000, fsStart: 0x3bc000, fsSize: 0x28000,
 });
 
 // Factory EC718PM erallum with the live BL/AP headers and fuse mirror excluded.
@@ -66,6 +71,11 @@ const ec718pm = Object.freeze({
   preservedRanges: lierdaPreservedRanges,
   applicationOnly: false,
 });
+const pmLiteLarge = Object.freeze({
+  ...ec718pm, app: Object.freeze({ ...liteApplication, ...pmLargeLayout }),
+});
+const pmLiteProfiles = [ec718pm, pmLiteLarge];
+
 function hmProfile(sdkVersion, baseImages, address, fsStart, fsSize) {
   const size = 0x800000;
   const app = Object.freeze({ name: 'TiRTC_pro_NT26F9D0', address, capacity: 0x2b4000, fsStart, fsSize });
@@ -93,7 +103,9 @@ const hm171 = hmProfile('1.7.1', [
   ec718hmBaseImages[2],
 ], 0x2ad000, 0x561000, 0x276000);
 
-const hardwareProfiles = [ec718pm, hm170, hm171];
+// A BL/AP fingerprint selects one shared PM base or a particular HM SDK.
+// The PM boards share the same base images.
+const bootProfiles = [ec718pm, hm170, hm171];
 
 // Two 4 KiB sectors, each holding a 272-byte USB image header padded with FF.
 // The BL and AP headers use controls=4, baud=0 and the full image hashes above.
@@ -112,20 +124,40 @@ export async function validateHmBootHeaders(bytes, profile) {
   return true;
 }
 
+// Canonical 272-byte BL and AP headers for the verified F6D_D base. Unused
+// sector padding is outside the headers and stays untouched by an APP update.
+export async function validatePmProBootHeaders(internal) {
+  const bl = await lierdaSha256(internal.subarray(0, 272));
+  const ap = await lierdaSha256(internal.subarray(0x1000, 0x1000 + 272));
+  if (bl !== 'e95cf80e5ed327a4ad0c6b0ea4a04f0a886d68307c88614e82dcf017781a81da'
+      || ap !== '0d0669b1d726effdd4b0685195efaccdbf322580778354cc8dffad3f8a3e6480') {
+    throw new LocalizedError('设备启动头与已验证的 PM Pro 底包不匹配。');
+  }
+}
+
 // The PM Pro distribution bundle includes internal firmware and an external
-// LittleFS image. Its package map is intentionally separate from the hardware
-// profiles used to select a live device and issue erase/write commands.
+// LittleFS image. Some Lite applications use the same internal partition sizes.
 const pmProExternalFs = Object.freeze({
-  role: 'EXT', name: 'ext_lfs', address: 0x80000000, capacity: 0x400000,
+  role: 'EXT', name: 'ext_lfs', id: 0x464c5849, address: 0x80000000, capacity: 0x400000,
+});
+const pmProApplication = Object.freeze({
+  name: 'TiRTC_pro_NT26F6D0', ...pmLargeLayout,
 });
 const pmProBundle = Object.freeze({
+  model: 'pro-pm',
+  boardLabel: 'NT26F6D0 Pro (F6D_D)',
+  chip: 'EC718PM',
+  size: flashSize,
+  externalSize: pmProExternalFs.capacity,
   product: 'EC718PM_PRD',
   baseImages: ec718pmBaseImages,
-  app: { name: 'TiRTC_pro_NT26F6D0', address: 0x2a6000, capacity: 0x116000,
-    fsStart: 0x3bc000, fsSize: 0x28000 },
+  app: pmProApplication,
+  eraseRanges: [{ start: pmProApplication.address, end: pmProApplication.fsStart }],
+  preservedRanges: [{ start: 0, end: pmProApplication.address }, { start: pmProApplication.fsStart, end: flashSize }],
   storageRanges: [{ start: 0, end: flashSize },
     { start: pmProExternalFs.address, end: pmProExternalFs.address + pmProExternalFs.capacity }],
 });
+const hardwareProfiles = [...bootProfiles, pmLiteLarge, pmProBundle];
 
 export function getLierdaHardwareProfile(model, sdkVersion) {
   const hardware = hardwareProfiles.find((candidate) => candidate.model === model
@@ -149,11 +181,16 @@ const hmReinstallPreservedRanges = Object.freeze([
 ]);
 
 export function getLierdaFlashPlan(deviceProfile, packageProfile) {
+  if (deviceProfile === pmProBundle && packageProfile === pmProBundle) {
+    // The base images are identical and verified before writing. Erase only the
+    // internal app partition here; SPI1 is addressed separately by its writer.
+    return { mode: 'pm-pro', eraseRanges: pmProBundle.eraseRanges, preservedRanges: pmProBundle.preservedRanges };
+  }
   if (!hardwareProfiles.includes(deviceProfile) || !hardwareProfiles.includes(packageProfile)
       || deviceProfile.model !== packageProfile.model) {
     throw new LocalizedError('应用镜像类型与所选利尔达板型不匹配。');
   }
-  if (deviceProfile === packageProfile) {
+  if (deviceProfile === packageProfile || deviceProfile.model === 'lite') {
     return { mode: deviceProfile.applicationOnly ? 'app' : 'full',
       eraseRanges: deviceProfile.eraseRanges, preservedRanges: deviceProfile.preservedRanges };
   }
@@ -165,7 +202,7 @@ export function getLierdaFlashPlan(deviceProfile, packageProfile) {
 }
 
 export function lierdaBootCandidates(digest) {
-  return hardwareProfiles.filter(({ baseImages }) => baseImages[0].sampleSha === digest);
+  return bootProfiles.filter(({ baseImages }) => baseImages[0].sampleSha === digest);
 }
 
 export function matchLierdaBootFingerprint(digest, apDigest) {
@@ -217,21 +254,40 @@ export function matchesLierdaApplicationLayout(data, { fsStart, fsSize }) {
   return view.getUint32(16, true) === fsStart && view.getUint32(20, true) === fsSize;
 }
 
-function checkApplication(data, profile, name) {
-  const matchesName = name === profile.name
-    || (name.startsWith(`${profile.name}_`) && /^[\w.-]+$/u.test(name));
+// The larger PM layout is used by both Lite AI and Pro. The model hint must
+// come from the installed application, independent of the firmware selection.
+export function matchLierdaDeviceLayout(base, header, appModel) {
+  if (base !== ec718pm) return matchesLierdaApplicationLayout(header, base.app) ? base : undefined;
+  const candidates = [...pmLiteProfiles, pmProBundle].filter(profile =>
+    matchesLierdaApplicationLayout(header, profile.app) && (!appModel || profile.model === appModel));
+  return candidates.length === 1 ? candidates[0] : undefined;
+}
+
+async function checkApplication(data, hardware, name) {
+  const profile = hardware.app;
+  const matchesName = [profile.name, ...(profile.aliases ?? [])].some(prefix => name === prefix
+    || (name.startsWith(prefix + '_') && /^[\w.-]+$/u.test(name)));
   if (!matchesName) {
     throw new LocalizedError('应用镜像类型与所选利尔达板型不匹配。');
   }
   if (!matchesLierdaApplicationLayout(data, profile)) {
     throw new LocalizedError('应用镜像标识或文件系统布局与所选型号分区不匹配。');
   }
+  if (hardware.chip === 'EC718PM' && profile.fsStart === pmLargeLayout.fsStart) {
+    const reported = await readPmApplicationModel(data, profile, (offset, length) => {
+      const relative = offset - profile.address;
+      return data.subarray(relative, relative + length);
+    }, data.length);
+    if (reported !== hardware.model) {
+      throw new LocalizedError('应用镜像标识或文件系统布局与所选型号分区不匹配。');
+    }
+  }
 }
 
 export async function parseLierdaPackage(input, { model, stage, filename, sha256: expectedSha } = {}) {
   if (stage !== 'app') throw new LocalizedError('所选利尔达板型需要应用固件包。');
   const pmPro = model === 'pro-pm';
-  const boardProfile = pmPro ? pmProBundle : getLierdaHardwareProfile(model);
+  const boardProfile = getLierdaHardwareProfile(model);
   const board = lierdaBoards.find(board => board.model === model);
   if (!(input instanceof ArrayBuffer || input instanceof Uint8Array)
       || input.byteLength < packageHeaderLength || input.byteLength > lierdaPackageSizeLimit(board)) {
@@ -271,19 +327,25 @@ export async function parseLierdaPackage(input, { model, stage, filename, sha256
   }
   // The full BL digest identifies the proposed HM layout. Every image is
   // then hashed and checked against that layout before a plan is returned.
-  const profile = model === 'pro-f9'
+  let profile = model === 'pro-f9'
     && readString(bytes, offset + 80, offset + 144).toLowerCase() === hm171.baseImages[0].digest
     ? hm171 : boardProfile;
-  const specs = [...profile.baseImages, { role: 'APP', id: 0x464c5849, ...profile.app }];
+  const specs = [...profile.baseImages, { role: 'APP', id: 0x464c5849 }];
   if (pmPro) specs.push(pmProExternalFs);
   const images = [];
-  for (const spec of specs) {
+  for (const image of specs) {
     const start = offset + imageHeaderLength;
-    if (start > bytes.length) throw new LocalizedError(localizedMessage('@0 镜像头越界。', spec.role));
+    if (start > bytes.length) throw new LocalizedError(localizedMessage('@0 镜像头越界。', image.role));
     const name = readString(bytes, offset, offset + 64);
+    const capacity = view.getUint32(offset + 68, true);
+    if (image.role === 'APP' && model === 'lite') {
+      // Both layouts share the three validated base images. Check the APP
+      // capacity against its embedded FS bounds and product name below.
+      profile = pmLiteProfiles.find(candidate => candidate.app.capacity === capacity) ?? boardProfile;
+    }
+    const spec = image.role === 'APP' ? { ...image, ...profile.app } : image;
     const external = spec === pmProExternalFs;
     const address = view.getUint32(offset + 64, true) - (external ? 0 : flashBase);
-    const capacity = view.getUint32(offset + 68, true);
     const recordedOffset = view.getUint32(offset + 72, true);
     const length = view.getUint32(offset + 76, true);
     const end = start + length;
@@ -297,7 +359,10 @@ export async function parseLierdaPackage(input, { model, stage, filename, sha256
       throw new LocalizedError(localizedMessage('@0 镜像地址、容量或位置与利尔达分区不匹配。', spec.role));
     }
     const data = bytes.subarray(start, end);
-    if (spec.role === 'APP') checkApplication(data, profile.app, name);
+    if (spec.role === 'APP') await checkApplication(data, profile, name);
+    if (external && readString(bytes, offset + 336, start) !== 'EFID01') {
+      throw new LocalizedError('NT26F6D0 Pro 的 ext_lfs 镜像必须指定 SPI1 外置 Flash（EFID01）。');
+    }
     if (external && String.fromCharCode(...data.subarray(8, 16)) !== 'littlefs') {
       throw new LocalizedError('NT26F6D0 Pro 的 ext_lfs 缺少外置 LittleFS 文件系统标识。');
     }

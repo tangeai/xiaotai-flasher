@@ -8,7 +8,6 @@ export { lierdaBoards };
 export function prepareLierdaFirmware({ model, file, origin, selectedRelease }, capacity) {
   const board = lierdaBoards.find((candidate) => candidate.model === model);
   if (!board) throw new LocalizedError('请选择利尔达开发板型号。');
-  if (board.flashUnavailable) throw new LocalizedError(board.flashUnavailable);
   if (capacity != null && capacity !== board.flashBytes) {
     throw new LocalizedError('已连接设备的 Flash 容量与所选利尔达板型不匹配。');
   }

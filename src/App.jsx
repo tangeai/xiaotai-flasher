@@ -950,11 +950,13 @@ export function App() {
   const localPackage = lierdaChoice.origin === 'local';
   const targetBoard = localPackage ? detectedLierdaBoard : lierdaBoard;
   const lierdaSelection = { ...lierdaChoice, model: targetBoard?.model };
+  const recoverySha = device?.lierdaRecoveryPackageSha;
   const lierdaPreflight = useLierdaPreflight(lierdaSelection,
-    lierda && Boolean(targetBoard) && targetBoard === detectedLierdaBoard && !targetBoard.flashUnavailable,
-    lierdaRelease);
+    lierda && Boolean(targetBoard) && targetBoard === detectedLierdaBoard,
+    lierdaRelease, recoverySha);
   const pendingLierdaMismatch = pending?.kind === 'lierda' &&
-    (pending.targetDevice !== device || !matchesLierdaDevice(pending, device));
+    (pending.targetDevice !== device || !matchesLierdaDevice(pending, device) ||
+      (recoverySha && pending.input.sha256 !== recoverySha));
 
   useEffect(() => {
     const abort = new AbortController();
@@ -1071,9 +1073,7 @@ export function App() {
   else if (!serialAvailable)
     readinessMessage = t('请在桌面 Chrome 或 Edge 中打开 HTTPS 烧录页。');
   else if (lierda) {
-    if (targetBoard?.flashUnavailable) {
-      readinessMessage = t(targetBoard.flashUnavailable);
-    } else if (device?.lierdaCompatibilityIssue) {
+    if (device?.lierdaCompatibilityIssue) {
       readinessMessage = t(device.lierdaCompatibilityIssue);
     } else if (device && (!detectedLierdaBoard || detectedLierdaBoard !== targetBoard)) {
       readinessMessage = detectedLierdaBoard && detectedLierdaBoard !== targetBoard

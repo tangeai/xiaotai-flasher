@@ -8,21 +8,24 @@ export function matchesLierdaDevice({ model, chip, flashBytes }, device) {
   return device?.lierdaModel === model && device.chip === chip && device.capacity === flashBytes;
 }
 
-export function useLierdaPreflight(selection, enabled, selectedRelease) {
+export function useLierdaPreflight(selection, enabled, selectedRelease, recoverySha) {
   const { model, origin } = selection;
   const file = enabled && origin === 'local' ? selection.file : null;
   const release = enabled && origin === 'official' ? selectedRelease : null;
+  const wrongRelease = Boolean(recoverySha && release && release.sha256.toLowerCase() !== recoverySha);
   const [result, setResult] = useState(null);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    if (!file && !release) return;
+    if ((!file && !release) || wrongRelease) return;
     const controller = new AbortController();
     (async () => {
       try {
         const input = await resolveLierdaFirmware({ kind: 'lierda', model, file, release, origin }, controller.signal);
         const plan = await parseLierdaPackage(input.bytes, input);
-        if (!controller.signal.aborted) setResult({ file, release, model, attempt, status: 'ready', input, profile: plan.profile });
+        if (!controller.signal.aborted) setResult({
+          file, release, model, attempt, status: 'ready', input: { ...input, sha256: plan.sha256 }, profile: plan.profile,
+        });
       } catch (error) {
         if (controller.signal.aborted) return;
         const detail = error instanceof LocalizedError ? error : localizedMessage('无法校验固件。@0', error);
@@ -30,10 +33,15 @@ export function useLierdaPreflight(selection, enabled, selectedRelease) {
       }
     })();
     return () => controller.abort();
-  }, [file, release, model, origin, attempt]);
+  }, [file, release, model, origin, attempt, wrongRelease]);
 
   if (!file && !release) return { status: 'idle' };
-  if (!result || result.file !== file || result.release !== release || result.model !== model || result.attempt !== attempt) return { status: 'checking' };
+  const current = result && result.file === file && result.release === release
+    && result.model === model && result.attempt === attempt;
+  if (wrongRelease || (current && recoverySha && result.status === 'ready' && result.input.sha256 !== recoverySha)) {
+    return { status: 'invalid', error: '请用上次中断的固件继续烧录。' };
+  }
+  if (!current) return { status: 'checking' };
   if (release && result.status === 'invalid') return { ...result, retry: () => setAttempt(value => value + 1) };
   return result;
 }
@@ -122,7 +130,9 @@ export function LierdaFlashSummary({ firmware }) {
       <div><dt>{t('目标芯片')}</dt><dd>{firmware.chip}</dd></div>
       <div><dt>{t('目标开发板')}</dt><dd>{t(firmware.boardModel)}</dd></div>
       <div><dt>{t('固件包')}</dt><dd>{firmware.filename}</dd></div>
-      <div><dt>{t('写入前备份')}</dt><dd>{t('全部内部 Flash（@0 MiB）', profile.size / 0x100000)}</dd></div>
+      <div><dt>{t('写入前备份')}</dt><dd>{mode === 'pm-pro'
+        ? t('内部 Flash 4 MiB 和 SPI1 外置 Flash 4 MiB，按此顺序保存。')
+        : t('全部内部 Flash（@0 MiB）', profile.size / 0x100000)}</dd></div>
       <div>
         <dt>{t('擦除范围（内部 Flash 偏移）')}</dt>
         <dd>{eraseRanges.map(({ start, end }) => (
@@ -134,6 +144,7 @@ export function LierdaFlashSummary({ firmware }) {
         <dd>
           {mode === 'reinstall'
             ? t('将重装底包和 APP，清空应用文件系统。设备绑定、设置及内部文件将丢失。保留并校验出厂数据及校准区。')
+            : mode === 'pm-pro' ? t('更新语音应用，保留其他内部分区。整片覆盖并校验 4 MiB 外置 Flash，原有外置文件将被替换。')
             : mode === 'app' ? t('APP 应用区，保留其余分区。')
             : t('BL、AP、CP 和 APP。可能清除绑定、设置和内部文件。')}
         </dd>

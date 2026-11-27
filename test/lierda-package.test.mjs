@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { createHash } from 'node:crypto';
+import { makePmFixture, populatePmSdkEntry } from './fixtures/lierda-hm.mjs';
 import {
   getLierdaFlashPlan, getLierdaHardwareProfile, lierdaBootCandidates, matchLierdaBootFingerprint,
-  matchesLierdaApplicationLayout, parseLierdaPackage,
+  matchLierdaDeviceLayout, matchesLierdaApplicationLayout, parseLierdaPackage,
 } from '../src/lierda-package.mjs';
 
 function packageHeader(product) {
@@ -63,23 +65,108 @@ test('boot fingerprints choose a connected Lierda profile without using a select
   assert.equal(matchLierdaBootFingerprint('0'.repeat(64)), undefined);
 });
 
-test('PM Pro catalog bundles require the external image and have no live write profile', async () => {
+test('PM Pro bundles require an external image and the correct product', async () => {
   const appOnly = packageHeader('EC718PM_PRD');
   await assert.rejects(parseLierdaPackage(appOnly, { model: 'pro-pm', stage: 'app' }), /ext_lfs/);
-  assert.throws(() => getLierdaHardwareProfile('pro-pm'), /受支持的利尔达板型/);
   const wrongChip = packageHeader('EC718HM_PRD');
   new DataView(wrongChip.buffer).setUint32(16, 5, true);
   await assert.rejects(parseLierdaPackage(wrongChip, { model: 'pro-pm', stage: 'app' }), /EC718PM_PRD/);
   await assert.rejects(parseLierdaPackage(wrongChip, { model: 'pro-f9', stage: 'app' }), /四个内部 Flash/);
 });
 
-test('the Lite app layout distinguishes the old NT26F6D0 Pro which shares its boot fingerprint', () => {
-  const { app } = getLierdaHardwareProfile('lite');
-  const liteHeader = Buffer.from('617070305161aa001860aa003861aa000010370000300700', 'hex');
-  const oldProHeader = Buffer.from('617070304961aa001860aa003061aa0000c03b0000800200', 'hex');
+test('PM Lite and Pro require separate application identity evidence on the shared PM layout', () => {
+  const lite = getLierdaHardwareProfile('lite');
+  const pro = getLierdaHardwareProfile('pro-pm');
+  const compact = Buffer.from('617070305161aa001860aa003861aa000010370000300700', 'hex');
+  const shared = Buffer.from('617070304961aa001860aa003061aa0000c03b0000800200', 'hex');
+  assert.equal(matchLierdaDeviceLayout(lite, compact), lite);
+  assert.equal(matchLierdaDeviceLayout(lite, compact, 'lite'), lite);
+  assert.equal(matchLierdaDeviceLayout(lite, compact, 'pro-pm'), undefined);
+  assert.equal(matchLierdaDeviceLayout(lite, shared), undefined);
+  assert.equal(matchLierdaDeviceLayout(lite, shared, 'pro-pm'), pro);
+  const largeLite = matchLierdaDeviceLayout(lite, shared, 'lite');
+  assert.equal(largeLite.model, 'lite');
+  assert.equal(largeLite.externalSize, undefined);
+  assert.equal(largeLite.app.fsStart, pro.app.fsStart);
+  for (const [source, target] of [[lite, largeLite], [largeLite, lite], [largeLite, largeLite]]) {
+    assert.deepEqual(getLierdaFlashPlan(source, target), getLierdaFlashPlan(lite, lite));
+  }
+  for (const [source, target] of [[largeLite, pro], [pro, largeLite]]) {
+    assert.throws(() => getLierdaFlashPlan(source, target));
+  }
+});
 
-  assert.equal(matchesLierdaApplicationLayout(liteHeader, app), true);
-  assert.equal(matchesLierdaApplicationLayout(oldProHeader, app), false);
+test('four-image Lite packages require matching application name, capacity and filesystem layout', async t => {
+  const pins = new Map();
+  const { firmware } = makePmFixture(getLierdaHardwareProfile('pro-pm'), pins);
+  // Pin only the existing synthetic base images to their vendor identities.
+  const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+  const digest = crypto.subtle.digest.bind(crypto.subtle);
+  t.mock.method(crypto.subtle, 'digest', (algorithm, data) => {
+    const pinned = pins.get(hash(data));
+    return pinned ? Uint8Array.from(Buffer.from(pinned, 'hex')).buffer : digest(algorithm, data);
+  });
+  const bytes = firmware.bytes;
+  let appOffset = 52 + bytes.readUInt16LE(30);
+  for (let i = 0; i < 3; i++) appOffset += 364 + bytes.readUInt32LE(appOffset + 76);
+  const end = appOffset + 364 + bytes.readUInt32LE(appOffset + 76);
+  function litePackage(name, capacity, fsStart, fsSize, programModel = 'lite') {
+    const lite = Buffer.from(bytes.subarray(0, end));
+    lite.writeUInt32LE(4, 16);
+    lite.fill(0, appOffset, appOffset + 64);
+    lite.write(name, appOffset);
+    lite.writeUInt32LE(capacity, appOffset + 68);
+    const app = lite.subarray(appOffset + 364);
+    populatePmSdkEntry(app, 0, programModel);
+    app.writeUInt32LE(fsStart, 16);
+    app.writeUInt32LE(fsSize, 20);
+    lite.write(hash(app), appOffset + 80);
+    return lite;
+  }
+
+  const options = { model: 'lite', stage: 'app' };
+  for (const [capacity, start, size] of [[0xcb000, 0x371000, 0x73000], [0x116000, 0x3bc000, 0x28000]]) {
+    const lite = litePackage('TiRTC_Lite_AI_NT26F6D0_device_02', capacity, start, size);
+    const plan = await parseLierdaPackage(lite, options);
+    assert.equal(plan.profile.model, 'lite');
+    assert.equal(plan.profile.app.capacity, capacity);
+    assert.equal(plan.profile.externalSize, undefined);
+    assert.deepEqual(plan.images.map(image => image.role), ['BL', 'AP', 'CP', 'APP']);
+    await assert.rejects(parseLierdaPackage(lite, { ...options, model: 'pro-pm' }), /ext_lfs/);
+  }
+  const wrongProgram = litePackage('TiRTC_Lite_AI_NT26F6D0_device_02', 0x116000, 0x3bc000, 0x28000, 'pro-pm');
+  await assert.rejects(parseLierdaPackage(wrongProgram, options), /应用镜像标识/);
+  const sharedLite = litePackage('TiRTC_Lite_AI_NT26F6D0_device_02', 0x116000, 0x3bc000, 0x28000);
+  for (const [model, bundle] of [['lite', sharedLite], ['pro-pm', Buffer.from(bytes)]]) {
+    const app = bundle.subarray(appOffset + 364, end);
+    app.write('V1.7.0_unidentified\0', 0x3000);
+    bundle.write(hash(app), appOffset + 80);
+    await assert.rejects(parseLierdaPackage(bundle, { ...options, model }), /应用镜像标识/);
+  }
+  const truncated = Buffer.from(bytes.subarray(0, appOffset + 10));
+  truncated.writeUInt32LE(4, 16);
+  await assert.rejects(parseLierdaPackage(truncated, options), /APP 镜像头越界/);
+  await assert.rejects(parseLierdaPackage(bytes, options));
+  await assert.rejects(parseLierdaPackage(litePackage('TiRTC_pro_NT26F6D0', 0x116000, 0x3bc000, 0x28000), options),
+    /应用镜像类型/);
+  await assert.rejects(parseLierdaPackage(litePackage('TiRTC_Lite_AI_NT26F6D0_device_02', 0xcb000, 0x3bc000, 0x28000), options),
+    /文件系统布局/);
+});
+
+test('PM Pro updates only the internal app range and keeps SPI1 out of its internal erase plan', () => {
+  const pro = getLierdaHardwareProfile('pro-pm');
+  const lite = getLierdaHardwareProfile('lite');
+  const hm = getLierdaHardwareProfile('pro-f9');
+  assert.equal(pro.size, 0x400000);
+  assert.equal(pro.externalSize, 0x400000);
+  const plan = getLierdaFlashPlan(pro, pro);
+  assert.equal(plan.mode, 'pm-pro');
+  assert.deepEqual(plan.eraseRanges, [{ start: 0x2a6000, end: 0x3bc000 }]);
+  assert.deepEqual(plan.preservedRanges, [{ start: 0, end: 0x2a6000 }, { start: 0x3bc000, end: 0x400000 }]);
+  for (const other of [lite, hm]) {
+    assert.throws(() => getLierdaFlashPlan(other, pro), /不匹配/);
+    assert.throws(() => getLierdaFlashPlan(pro, other), /不匹配/);
+  }
 });
 
 test('NT26F9D0 preserves both ends of internal Flash and checks the app filesystem layout', () => {

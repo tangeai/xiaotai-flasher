@@ -42,6 +42,10 @@ test('Flash backup requires durable readback before reporting success', async ()
     assert.equal(proBackup.sha256, proDigest);
     assert.match(proBackup.name, /^lierda-pro-f9-.*\.bin$/);
     assert.equal(saved.length, proBytes.length);
+    await assert.rejects(persistLierdaFlashBackup(bytes, digest, 'pro-pm'), /8 MiB Flash/);
+    const voiceBackup = await persistLierdaFlashBackup(proBytes, proDigest, 'pro-pm');
+    assert.match(voiceBackup.name, /^lierda-pro-pm-internal-spi1-.*\.bin$/);
+    assert.deepEqual(saved, proBytes);
     corrupt = true;
     await assert.rejects(persistLierdaFlashBackup(bytes, digest, 'lite'), /SHA-256 不一致/);
     assert.equal(removed, true);

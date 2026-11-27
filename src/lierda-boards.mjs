@@ -15,7 +15,6 @@ export const lierdaBoards = Object.freeze([
     slug: 'lierda-ec718pm-pro',
     firmwareKey: 'pro-pm',
     name: 'NT26F6D0-Pro-EC718PM语音板',
-    flashUnavailable: '此板型可查看在线固件，网页暂不支持写入外置 Flash。',
     maxPackageBytes: 0x810000,
     chip: 'EC718PM',
     flashBytes: 0x400000,

@@ -2,7 +2,9 @@ import { LocalizedError, t, localizedMessage } from './i18n.mjs';
 import { getLierdaHardwareProfile, lierdaSha256 } from './lierda-package.mjs';
 
 export async function persistLierdaFlashBackup(bytes, sha256, model) {
-  const { size } = getLierdaHardwareProfile(model);
+  const hardware = getLierdaHardwareProfile(model);
+  // A dual-flash backup is one file, with the internal flash first and SPI1 second.
+  const size = hardware.size + (hardware.externalSize ?? 0);
   if (!(bytes instanceof Uint8Array) || bytes.length !== size) {
     throw new LocalizedError(localizedMessage('利尔达备份需要完整的 @0 MiB Flash。', size / 0x100000));
   }
@@ -12,7 +14,8 @@ export async function persistLierdaFlashBackup(bytes, sha256, model) {
   const root = await navigator.storage.getDirectory();
   const folder = await root.getDirectoryHandle('lierda-flash-backup', { create: true });
   const timestamp = new Date().toISOString().replace(/[^0-9]/g, '');
-  const name = 'lierda-' + model + '-' + timestamp + '-' + crypto.randomUUID().slice(0, 8) + '.bin';
+  const storage = hardware.externalSize ? '-internal-spi1' : '';
+  const name = 'lierda-' + model + storage + '-' + timestamp + '-' + crypto.randomUUID().slice(0, 8) + '.bin';
   let handle;
   try {
     handle = await folder.getFileHandle(name, { create: true });

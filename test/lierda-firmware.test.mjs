@@ -28,7 +28,7 @@ test('an empty or pre-Lierda catalog does not enable a built-in online firmware'
     const [board] = publishedBoards({ boards: [entry(hardware, [])] }, catalogURL);
     assert.deepEqual(board.versions, []);
     assert.throws(() => prepareLierdaFirmware({ model: hardware.model, origin: 'official' }),
-      hardware.flashUnavailable ? { message: hardware.flashUnavailable } : /暂无可选/);
+      /暂无可选/);
   }
 });
 
@@ -96,14 +96,6 @@ for (const hardware of lierdaBoards) {
     const expectedFilename = `v${older.version}-${hardware.slug}.binpkg`;
     assert.equal(selectedRelease.filename, expectedFilename);
     assert.equal(selectedRelease.source_filename, older.source_filename);
-    if (hardware.flashUnavailable) {
-      for (const origin of ['official', 'local']) {
-        assert.throws(() => prepareLierdaFirmware({ model: hardware.model, origin, selectedRelease }),
-          { message: hardware.flashUnavailable });
-      }
-      assert.equal(calls.length, 2);
-      return;
-    }
     const selected = prepareLierdaFirmware({ model: hardware.model, origin: 'official', selectedRelease }, hardware.flashBytes);
     assert.equal(selected.boardModel, hardware.name);
     assert.equal(selected.filename, expectedFilename);

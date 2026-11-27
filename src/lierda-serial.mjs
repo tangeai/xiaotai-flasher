@@ -15,10 +15,9 @@ export function parseLierdaBaudrate(value) {
     ? value : null;
 }
 
-const VERIFIED_USB_ROM_ID = '0000000103030000';
-// Additional ROM IDs in the EC718PM/HM USB profiles of FlashToolCLI V4.1.22.
-// Only the verified ID can proceed with the AgentBoot bundled by the website.
-const ADDITIONAL_VENDOR_ROM_IDS = new Set(['0000000203030000', '0000000303030000']);
+// FlashToolCLI maps EC718M2 chip revisions V0/V1/V2 to these DLBOOT ROM IDs.
+const EC718M2_ROM_IDS = ['0000000103030000', '0000000203030000', '0000000303030000'];
+const LPC_CHIP_INFO_ADDRESS = 0xe0000000;
 
 const ROM_SYNC = 0x2b02d300;
 const LPC_SYNC = 0x2b02d3cd;
@@ -34,6 +33,10 @@ const ROM_COMMANDS = {
   done: 0x3a,
 };
 const LPC_READ_MEM = 0x21;
+// Resident image on the verified EC718PM/HM USB AgentBoot target.
+const USB_AGENT_RAM_BASE = 0x00401000;
+const LPC_FLASH_BLOCK_READ = 0x24;
+const LPC_FLASH_BLOCK_SIZE = 0x10000;
 const SERIAL_TIMEOUT_MS = 800;
 const WRITE_TIMEOUT_MS = 3_000;
 const SYNC_ATTEMPTS = 5;
@@ -43,6 +46,7 @@ const RESPONSE_HEADER_LENGTH = 6;
 const EMPTY = new Uint8Array(0);
 
 class SerialTimeout extends LocalizedError {}
+class SyncMismatch extends LocalizedError {}
 class AtPortClosed extends LocalizedError {}
 
 function wait(ms) {
@@ -525,7 +529,7 @@ async function synchronize(io, word, label) {
     io.discardBufferedInput();
     return lastReply;
   }
-  throw new LocalizedError(localizedMessage('@0 同步失败，最后一次接收 @1', label, lastReply));
+  throw new SyncMismatch(localizedMessage('@0 同步失败，最后一次接收 @1', label, lastReply));
 }
 
 async function sendCommand(io, command, payload, { index = 0, lpc = false, agent = false } = {}) {
@@ -561,21 +565,31 @@ async function sendCommand(io, command, payload, { index = 0, lpc = false, agent
       await wait(2);
     }
     const response = await io.readExactly(RESPONSE_HEADER_LENGTH);
+    const responseIndex = downloadData ? (index + 1) & 0xff : index;
+    if (response[0] !== command || response[1] !== responseIndex
+        || response[2] !== order || response[3] !== inverse) {
+      throw new LocalizedError(localizedMessage('回包头与请求不匹配，收到 @0', bytesHex(response, " ")));
+    }
     const responseLength = response[5];
     if (!lpc && responseLength > MAX_ROM_RESPONSE) {
       throw new LocalizedError(localizedMessage('回包过长，收到 @0 字节', responseLength));
     }
-    const data = responseLength > 0 ? await io.readExactly(responseLength) : EMPTY;
+    let data;
+    if (lpc && command === LPC_FLASH_BLOCK_READ && response[4] === 0) {
+      // LPC uses 0xfa as a size marker for one fixed 64 KiB storage block.
+      if (responseLength !== 0xfa) throw new LocalizedError('外置 Flash 块回读长度标识无效。');
+      data = new Uint8Array(LPC_FLASH_BLOCK_SIZE);
+      for (let offset = 0; offset < data.length; offset += 4096) {
+        data.set(await io.readExactly(4096), offset);
+      }
+    } else {
+      data = responseLength > 0 ? await io.readExactly(responseLength) : EMPTY;
+    }
     if (usesCrc) {
       const checksum = await io.readExactly(4);
       if (wordAt(checksum) !== crc32(response, data)) {
         throw new LocalizedError('回包 CRC32 校验失败');
       }
-    }
-    const responseIndex = downloadData ? (index + 1) & 0xff : index;
-    if (response[0] !== command || response[1] !== responseIndex
-        || response[2] !== order || response[3] !== inverse) {
-      throw new LocalizedError(localizedMessage('回包头与请求不匹配，收到 @0', bytesHex(response, " ")));
     }
     if (response[4] !== 0) {
       throw new LocalizedError(localizedMessage('设备返回错误状态 0x@0@1', response[4].toString(16).padStart(2, "0"), data.length ? " · " + bytesHex(data, " ") : ""));
@@ -586,6 +600,26 @@ async function sendCommand(io, command, payload, { index = 0, lpc = false, agent
   }
 }
 
+function requireVerifiedUsbRom(romId, detail) {
+  if (romId === EC718M2_ROM_IDS[0]) return;
+  if (EC718M2_ROM_IDS.includes(romId)) {
+    throw new LocalizedError(localizedMessage('已识别移芯 ROM @0。当前网页 AgentBoot 尚未在此版本上验证，请使用配套的 FlashToolCLI。', romId));
+  }
+  throw new LocalizedError(localizedMessage('下载口 ROM 与已验证的利尔达移芯版本不匹配 · @0', detail));
+}
+
+async function checkResidentChipRevision(io) {
+  // FlashToolCLI LPCCatchChipInfo reads a 32-byte record. CatchedChipInfo
+  // pairs the EC718M2 family name with the little-endian revision at byte 16.
+  const info = await readMemory(io, LPC_CHIP_INFO_ADDRESS, 32);
+  const family = String.fromCharCode(...info.subarray(0, 7));
+  const revision = new DataView(info.buffer, info.byteOffset, info.byteLength).getUint32(16, true);
+  if (family !== 'ec718m2' || info[7] !== 0 || revision >= EC718M2_ROM_IDS.length) {
+    throw new LocalizedError('无法确认当前芯片的 ROM 修订。请复位设备后重新连接。');
+  }
+  requireVerifiedUsbRom(EC718M2_ROM_IDS[revision]);
+}
+
 async function imageInfo(io, imageId, label, log, agent = false) {
   const options = { agent };
   const version = await sendCommand(io, ROM_COMMANDS.version, EMPTY, options);
@@ -593,12 +627,7 @@ async function imageInfo(io, imageId, label, log, agent = false) {
     // The ROM returns its eight-byte ID least-significant byte first, followed
     // by optional build information. Vendor profiles use most-significant byte first.
     const romId = bytesHex(version.slice(0, 8).reverse());
-    if (ADDITIONAL_VENDOR_ROM_IDS.has(romId)) {
-      throw new LocalizedError(localizedMessage('已识别移芯 ROM @0。当前网页 AgentBoot 尚未在此版本上验证，请使用配套的 FlashToolCLI。', romId));
-    }
-    if (romId !== VERIFIED_USB_ROM_ID) {
-      throw new LocalizedError(localizedMessage('下载口 ROM 与已验证的利尔达移芯版本不匹配 · @0', bytesHex(version, " ")));
-    }
+    requireVerifiedUsbRom(romId, bytesHex(version, " "));
     log(t('DLBOOT @0 · ROM 版本 @1', label, bytesHex(version, " ")));
   }
   const selected = await sendCommand(io, ROM_COMMANDS.selectImage, EMPTY, options);
@@ -647,6 +676,16 @@ async function imageHeader(length, digest, { id, address, baud, controls }) {
   return header;
 }
 
+export function flashImageHeader(image) {
+  const external = image.role === 'EXT';
+  return imageHeader(image.data.length, image.digest, {
+    id: image.imageId,
+    address: external ? 0 : image.address,
+    baud: 0,
+    controls: external ? 0 : 4,
+  });
+}
+
 // The caller opens the QDLoader port at the selected baud rate and asserts DTR first.
 async function connectAgent(port, agentBytes, log, baudrate = USB_BAUD, signal) {
   const info = port.getInfo();
@@ -685,7 +724,32 @@ async function connectAgent(port, agentBytes, log, baudrate = USB_BAUD, signal) 
   try {
     writer = port.writable.getWriter();
     const io = serialIO(reader, writer, baudrate, signal);
-    const reply = await synchronize(io, ROM_SYNC, "DLBOOT");
+    let reply;
+    try {
+      reply = await synchronize(io, ROM_SYNC, 'DLBOOT');
+    } catch (error) {
+      if (!(error instanceof SyncMismatch)) throw error;
+      // Closing QDLoader releases the host port but can leave AgentBoot running in RAM.
+      // Only the initial sync can take this path. A ROM/version or transfer error must propagate.
+      try {
+        await synchronize(io, LPC_SYNC, 'LPC');
+      } catch (lpcError) {
+        if (!(lpcError instanceof SyncMismatch)) throw lpcError;
+        throw new LocalizedError(localizedMessage('@0。@1', error, lpcError), { cause: lpcError });
+      }
+      // A sync echo can come from a different loader. Check the resident image
+      // against the same verified bytes the cold path would upload.
+      for (let offset = 0; offset < agent.length; offset += 240) {
+        const count = Math.min(240, agent.length - offset);
+        const block = await readMemory(io, USB_AGENT_RAM_BASE + offset, count);
+        if (!block.every((byte, index) => byte === agent[offset + index])) {
+          throw new LocalizedError('设备中的下载程序与网页版本不一致。请复位设备后重新连接。');
+        }
+      }
+      await checkResidentChipRevision(io);
+      log(t('已重新连接运行中的下载程序，正在核对设备。'));
+      return { io, close };
+    }
     log(t('DLBOOT 同步通过 · RX @0', reply.toUpperCase()));
     await imageInfo(io, HEAD_IMAGE, "HEAD", log);
     await sendImageData(io, header);
@@ -710,5 +774,6 @@ async function readMemory(io, address, length) {
 }
 
 export { DOWNLOAD_VENDOR, DOWNLOAD_PRODUCT, USB_BAUD, AGENT_SYNC, LPC_SYNC, HEAD_IMAGE,
+  LPC_FLASH_BLOCK_READ, LPC_FLASH_BLOCK_SIZE,
   EMPTY, words, sendCommand, synchronize, imageInfo, sendImageData, imageHeader,
   connectAgent, readMemory };
