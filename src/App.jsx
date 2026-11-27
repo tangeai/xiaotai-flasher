@@ -1200,7 +1200,7 @@ export function App() {
         {platformBoards.map(entry => (
           <option key={entry.slug} value={entry.slug}
             disabled={Boolean(device || workbench.monitoring) && flashProtocol(entry) !== protocol}>
-            {entry.slug} · {t(entry.model)}
+            {entry.model}
           </option>
         ))}
       </select>

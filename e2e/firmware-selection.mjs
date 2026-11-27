@@ -73,6 +73,7 @@ for (const platform of ['esp32', 'bk7258']) {
     await file.setInputFiles(bin);
     await chooseSource(page, 'source', 'official');
     await page.locator('#board').selectOption(second.slug);
+    assert.equal(await page.locator('#board option:checked').textContent(), second.model);
     await chooseSource(page, 'source', 'local');
     assert.match(await page.locator('#start-hint').innerText(), /请选择完整 BIN 镜像/);
     assert.equal(await file.evaluate(input => input.files.length), 0);
